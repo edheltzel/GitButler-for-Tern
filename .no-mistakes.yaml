@@ -1,3 +1,12 @@
 commands:
   test: "cd plugin && luau check.luau | grep -qx 'parse: ok'"
-  lint: "cd plugin && rc=0; out=$(luau-analyze $(ls *.luau | grep -v '^tern\\.d\\.luau$') 2>&1) || rc=$?; [ $rc -le 1 ] && ! printf '%s\\n' \"$out\" | grep SyntaxError"
+  # Every .luau but the generated tern.d.luau, passed as separate arguments.
+  # luau-analyze exits 1 on the expected type noise (it can't load
+  # tern.d.luau), so only a `): SyntaxError:` diagnostic or a worse exit fails.
+  lint: |
+    cd plugin || exit 1
+    set --
+    for f in *.luau; do [ "$f" = tern.d.luau ] || set -- "$@" "$f"; done
+    rc=0
+    out=$(luau-analyze "$@" 2>&1) || rc=$?
+    [ "$rc" -le 1 ] && ! printf '%s\n' "$out" | grep -F '): SyntaxError:'

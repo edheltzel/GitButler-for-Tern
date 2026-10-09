@@ -29,8 +29,8 @@ This repo is a GitButler workspace (`gitbutler/workspace`, target `origin/main`,
 - Force reload: `tern plugin reload`
 - Regenerate types after a Tern upgrade: `tern plugin types plugin` (writes `plugin/tern.d.luau`; don't hand-edit it)
 - Parser check: `cd plugin && luau check.luau` (must print `parse: ok`)
-- Syntax check: `cd plugin && luau-analyze host.luau lenses.luau gb.luau window.luau parse.luau 2>&1 | grep -i syntax` (empty output means clean; the type errors it reports are expected noise, because luau-lsp/luau-analyze can't load `tern.d.luau`)
-- CI: `.no-mistakes.yaml` owns the checks (`commands.test` = parser check, `commands.lint` = syntax check over every `.luau` except `tern.d.luau`, failing on any `SyntaxError` or a missing/crashed `luau-analyze`); `.github/workflows/ci.yml` mirrors them on Luau 0.741 (regenerate with `no-mistakes ci-workflow -f`, then restore the Install Luau step). The gate reads `commands.*` only from `main`.
+- Syntax check: `cd plugin && luau-analyze host.luau lenses.luau gb.luau window.luau parse.luau width.luau 2>&1 | grep -i syntax` (empty output means clean; the type errors it reports are expected noise, because luau-lsp/luau-analyze can't load `tern.d.luau`)
+- CI: `.no-mistakes.yaml` owns the checks (`commands.test` = parser and width check, `commands.lint` = syntax check over every `.luau` except `tern.d.luau`, each passed as its own argument, failing on a `): SyntaxError:` diagnostic or a missing/crashed `luau-analyze`); `.github/workflows/ci.yml` mirrors them on Luau 0.741 (regenerate with `no-mistakes ci-workflow -f`, then restore the Install Luau step and the lint script). A newer push cancels a PR's run, never `main`'s. The gate reads `commands.*` only from `main`, and GitHub Actions runs `run:` steps with `bash -e`, so test a changed script under both `sh -c` and `bash -e -c`.
 - Logs: `~/Library/Logs/Tern/tern-daemon.log` (host half, `plugin handler failed`), `~/Library/Logs/Tern/tern.log` (window half)
 
 ## Testing
