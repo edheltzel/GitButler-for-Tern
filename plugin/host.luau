@@ -477,28 +477,30 @@ local function hint(keys: string): Node
 	return sp(keys, "bp-hint")
 end
 
--- Worst-case detail pane height, in list rows (LH+6 px each): 18 text lines
--- (title, badges, 3 kv lines, a 4-line body, "Files", 7 file lines, the hint)
--- plus the 7 gaps and padding come to about 17; 18 leaves a line for a wrap.
-local DETAIL_LINES = 18
-
--- The selected row, as a detail pane (lanes and graph views).
-local function detail_pane(state: State, model: gb.Model, assigned: { [string]: string }): Node
+-- The selected row, as a detail pane (lanes and graph views), and its
+-- height in px: a narrow pane stacks it under the list, which gives up
+-- that much room. Measured: 8px padding and gaps, a title LH+4, badges LH+2.
+local function detail_pane(state: State, model: gb.Model, assigned: { [string]: string }): (Node, number)
 	local row = selected(state)
 	local kids: { Node } = {}
+	local px = 8 -- padding 8 + 8, less the first gap
+	local function add(node: Node, lines: number, extra: number?)
+		table.insert(kids, node)
+		px += 8 + lines * LH + (extra or 0)
+	end
 	if row == nil then
-		table.insert(kids, sp("Nothing selected", "bp-dim"))
+		add(sp("Nothing selected", "bp-dim"), 1)
 	elseif row.kind == "file" or row.kind == "cfile" then
-		table.insert(kids, sp(row.label, "bp-dh"))
-		table.insert(kids, el("bp-badges", {
+		add(sp(row.label, "bp-dh"), 1, 5)
+		add(el("bp-badges", {
 			ui.badge(row.change or "changed", "warning"),
 			el("bp-label", { ui.badge(if row.kind == "cfile" then "in " .. (row.branch or "commit") else (assigned[row.label] and ("→ " .. assigned[row.label]) or "unassigned"), "muted") }),
-		}))
-		table.insert(kids, hint(if row.kind == "file" then "⏎ diff  space mark  c commit  m move  A absorb" else "⏎ diff  m move"))
+		}), 1, 3)
+		add(hint(if row.kind == "file" then "⏎ diff  space mark  c commit  m move  A absorb" else "⏎ diff  m move"), 1)
 	else
 		local b = branch_of_row(model, row)
 		local c = if row.kind == "commit" then commit_of_row(model, row) else nil
-		table.insert(kids, sp(if c then c.title else row.label, "bp-dh"))
+		add(sp(if c then c.title else row.label, "bp-dh"), 1, 5)
 		local badges: { Node } = { el("bp-label", { ui.badge("⎇ " .. branch_label(model, row), "accent") }), status_badge(b) }
 		if c and c.conflicted then
 			table.insert(badges, ui.badge("conflicted", "error"))
@@ -506,14 +508,14 @@ local function detail_pane(state: State, model: gb.Model, assigned: { [string]: 
 		if b and b.review then
 			table.insert(badges, ui.badge("PR " .. b.review, "info"))
 		end
-		table.insert(kids, el("bp-badges", badges))
+		add(el("bp-badges", badges), 1, 3)
 		if c then
-			table.insert(kids, ui.kv({
+			add(ui.kv({
 				{ { ui.span("id", "muted") }, { ui.span(c.id, "mono") } },
 				{ { ui.span("change", "muted") }, { ui.span(string.sub(c.changeId, 1, 12), "mono") } },
 				{ { ui.span("sha", "muted") }, { ui.span(string.sub(c.sha, 1, 12), "mono") } },
-			}))
-			-- capped so the pane has a fixed worst-case height (DETAIL_LINES)
+			}), 3, 6)
+			-- capped so the pane stays short
 			local body = string.match(c.message, "^[^\n]*\n+(.+)$")
 			if body then
 				local kept: { string } = {}
@@ -524,9 +526,9 @@ local function detail_pane(state: State, model: gb.Model, assigned: { [string]: 
 					end
 					table.insert(kept, line)
 				end
-				table.insert(kids, sp(table.concat(kept, "\n"), "bp-body"))
+				add(sp(table.concat(kept, "\n"), "bp-body"), #kept)
 			end
-			table.insert(kids, sp("Files " .. #c.files, "bp-sub"))
+			add(sp("Files " .. #c.files, "bp-sub"), 1)
 			local files: { Node } = {}
 			local shown = 0
 			for _, r in state.rows do
@@ -539,13 +541,13 @@ local function detail_pane(state: State, model: gb.Model, assigned: { [string]: 
 					table.insert(files, el("bp-f", file_line(state, r, nil)))
 				end
 			end
-			table.insert(kids, el("bp-files", files))
-			table.insert(kids, hint("⏎ diff  e reword  m move  p push  P PR  z undo"))
+			add(el("bp-files", files), #files)
+			add(hint("⏎ diff  e reword  m move  p push  P PR  z undo"), 1)
 		elseif b and #b.commits > 0 then
 			-- a branch row (lanes view): where it sits and its newest commits
 			local below = below_of(model, b)
-			table.insert(kids, sp(if below then "stacked on " .. gb.label(below) else "on the target", "bp-dim bp-clip"))
-			table.insert(kids, sp("Commits " .. #b.commits, "bp-sub"))
+			add(sp(if below then "stacked on " .. gb.label(below) else "on the target", "bp-dim bp-clip"), 1)
+			add(sp("Commits " .. #b.commits, "bp-sub"), 1)
 			local lines: { Node } = {}
 			for i, bc in b.commits do
 				if i > 6 then
@@ -554,14 +556,14 @@ local function detail_pane(state: State, model: gb.Model, assigned: { [string]: 
 				end
 				table.insert(lines, el("bp-f", { sp(bc.title, "bp-t"), sp(bc.id, "bp-id") }))
 			end
-			table.insert(kids, el("bp-files", lines))
-			table.insert(kids, hint("⏎ diff  e rename  p push  P PR  N stack  L land"))
+			add(el("bp-files", lines), #lines)
+			add(hint("⏎ diff  e rename  p push  P PR  N stack  L land"), 1)
 		else
-			table.insert(kids, sp("No commits yet.", "bp-dim"))
-			table.insert(kids, hint("c commit here  e rename  p push"))
+			add(sp("No commits yet.", "bp-dim"), 1)
+			add(hint("c commit here  e rename  p push"), 1)
 		end
 	end
-	return el("bp-detail", kids)
+	return el("bp-detail", kids), px
 end
 
 -- Side by side when the pane is wide, stacked when narrow. CSS decides with
@@ -581,10 +583,11 @@ end
 local function lanes_view(state: State, model: gb.Model): Node
 	local assigned = assignments(model)
 	local current = selected(state)
-	-- A narrow pane puts the detail (at most DETAIL_LINES) under the lanes.
+	-- A narrow pane puts the detail under the lanes.
+	local detail, detail_px = detail_pane(state, model, assigned)
 	local budget = list_px(state)
 	if state.cx.cols < 110 then
-		budget = math.max(3 * ROW, budget - DETAIL_LINES * ROW)
+		budget = math.max(3 * ROW, budget - detail_px)
 	end
 	local function order_lanes(first: number): { number }
 		local order: { number } = {}
@@ -729,7 +732,7 @@ local function lanes_view(state: State, model: gb.Model): Node
 		table.insert(cards, lane_card(lane, rows, cap))
 		left -= extra + shown * ROW
 	end
-	return split(state, el("bp-lanes", cards, { key = "lanes" }), detail_pane(state, model, assigned), "lanes")
+	return split(state, el("bp-lanes", cards, { key = "lanes" }), detail, "lanes")
 end
 
 -- Graph: every commit top-down with a lane per stack, joined at the base.
@@ -781,10 +784,11 @@ local function graph_view(state: State, model: gb.Model): Node
 		return el("bp-g", cells, { min = { w = (n * 2) .. "ch" }, max = { w = (n * 2) .. "ch" } })
 	end
 
-	-- A narrow pane puts the detail (at most DETAIL_LINES) under the list.
+	-- A narrow pane puts the detail under the list.
+	local detail, detail_px = detail_pane(state, model, assigned)
 	local room = fit_lines(list_px(state)) - 2
 	if state.cx.cols < 110 then
-		room = math.max(3, room - DETAIL_LINES)
+		room = math.max(3, room - math.ceil(detail_px / ROW))
 	end
 	local lo, hi, up, down = window(list, state.cursor, room)
 	local lines: { Node } = {}
@@ -830,7 +834,7 @@ local function graph_view(state: State, model: gb.Model): Node
 		el("bp-gh", { sp("Branch", "bp-gh1"), sp("Graph", "bp-gh2"), sp("Commit", "") }),
 		el("bp-rows", lines),
 	})
-	return split(state, left, detail_pane(state, model, assigned), "graph")
+	return split(state, left, detail, "graph")
 end
 
 -- Stacks: the uncommitted tray, then one column per stack.
