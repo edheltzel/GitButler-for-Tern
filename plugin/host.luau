@@ -69,7 +69,7 @@ type State = {
 	sheet: Sheet?,
 	busy: string?, -- what the running mutation is doing
 	notice: { tone: string, text: string }?,
-	view: string, -- "lanes" | "graph" | "stacks" | "branches"
+	view: string, -- "lanes" | "graph" | "stacks" | "branches" | "board"
 }
 
 local running: { [number]: State } = {}
@@ -1860,7 +1860,6 @@ local function action_place_above(state: State, target: Row)
 	end)
 end
 
--- Turns the selected commit or committed file back into uncommitted changes.
 local function action_uncommit(state: State)
 	local row, ref = held_change(state)
 	if row == nil or ref == nil then
@@ -1878,9 +1877,9 @@ end
 -- Amends the checked (or selected) uncommitted files into `target`, any
 -- commit, not only a branch tip.
 local function action_amend(state: State, target: Row)
-	local tid = target.changeId
-	if tid == nil or tid == "" then
-		notify(state, "warning", "That commit has no stable id. Nothing was modified.")
+	local tid, why = change_ref(target)
+	if tid == nil then
+		notify(state, "warning", why :: string)
 		return
 	end
 	local row = selected(state)
@@ -2636,12 +2635,10 @@ local function sheet_key(state: State, key: Key)
 	end
 end
 
--- Board: the GitButler desktop layout. A toolbar, the uncommitted column,
--- one column per stack and a new-branch column. Blocks get no drag and drop,
--- so the GUI's drag is select-then-drop: the selected card, or the checked
--- files, is what moves, and every card that can take it shows drop buttons.
--- A right-click lists a card's own actions; a selected commit opens to its
--- files. Cards are one row (ROW px with the 2px column gap).
+-- Board: the GitButler desktop layout. Blocks get no drag and drop, so the
+-- GUI's drag is select-then-drop: the selected card, or the checked files,
+-- is what moves, and every card that can take it shows drop buttons. Cards
+-- are one row (ROW px with the 2px column gap).
 local BOARD_TOOLS = LH + 22 -- toolbar buttons, padding, the gap below
 local COL_CHROME = 3 + 16 + ROW + 2 -- top edge, padding, column head, its gap
 
@@ -2659,7 +2656,7 @@ local function board_view(state: State, model: gb.Model): Node
 	local function card(r: Row, class: string, kids: { Node }, menu: { string }): Node
 		local node = pickable(state, r, "bp-card " .. class, kids)
 		local p: { [string]: any } = node.p or {}
-		p.actions = { click = "pick=" .. r.key, dblclick = "open=" .. r.key, menu = menu }
+		p.actions.menu = menu
 		node.p = p
 		return node
 	end
@@ -2852,7 +2849,6 @@ local OPS: { [string]: (State) -> () } = {
 	uncommit = action_uncommit,
 }
 
--- Runs `go` unless a read or mutation is in flight or nothing is loaded.
 local function guarded(state: State, go: () -> ())
 	if state.busy then
 		notify(state, "warning", "Wait for " .. state.busy)
@@ -2901,11 +2897,10 @@ local function board_do(state: State, k: string, key: string?)
 			end
 		end
 	end
-	if ACTIONS[k] then
-		run_action(state, k)
-	elseif OPS[k] then
+	local go = ACTIONS[k] or OPS[k]
+	if go then
 		guarded(state, function()
-			OPS[k](state)
+			go(state)
 		end)
 	end
 end
@@ -3105,7 +3100,6 @@ tern.block.define("workspace", {
 			return
 		end
 		if ev.ev == "action" and ev.act == "do" and type(ev.value) == "string" then
-			-- a board toolbar button: an action key or a board op
 			if state.sheet == nil then
 				board_do(state, ev.value, nil)
 			end
