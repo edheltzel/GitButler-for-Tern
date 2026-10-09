@@ -8,10 +8,11 @@ on:
 permissions:
   contents: read
 
-# A newer push to a PR replaces its run; runs on main always finish.
+# A newer push to a PR replaces its run; each run on main has its own group,
+# so none is cancelled or replaced while pending.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 
 env:
   LUAU_VERSION: '0.741'
