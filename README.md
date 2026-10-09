@@ -1,24 +1,24 @@
 ```
-██████╗ ██╗   ██╗████████╗██╗     ███████╗██████╗     ██████╗  █████╗ ███╗   ██╗███████╗
-██╔══██╗██║   ██║╚══██╔══╝██║     ██╔════╝██╔══██╗    ██╔══██╗██╔══██╗████╗  ██║██╔════╝
-██████╔╝██║   ██║   ██║   ██║     █████╗  ██████╔╝    ██████╔╝███████║██╔██╗ ██║█████╗
-██╔══██╗██║   ██║   ██║   ██║     ██╔══╝  ██╔══██╗    ██╔═══╝ ██╔══██║██║╚██╗██║██╔══╝
-██████╔╝╚██████╔╝   ██║   ███████╗███████╗██║  ██║    ██║     ██║  ██║██║ ╚████║███████╗
-╚═════╝  ╚═════╝    ╚═╝   ╚══════╝╚══════╝╚═╝  ╚═╝    ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝
+ ██████╗ ██╗████████╗██████╗ ██╗   ██╗████████╗██╗     ███████╗██████╗
+██╔════╝ ██║╚══██╔══╝██╔══██╗██║   ██║╚══██╔══╝██║     ██╔════╝██╔══██╗
+██║  ███╗██║   ██║   ██████╔╝██║   ██║   ██║   ██║     █████╗  ██████╔╝
+██║   ██║██║   ██║   ██╔══██╗██║   ██║   ██║   ██║     ██╔══╝  ██╔══██╗
+╚██████╔╝██║   ██║   ██████╔╝╚██████╔╝   ██║   ███████╗███████╗██║  ██║
+ ╚═════╝ ╚═╝   ╚═╝   ╚═════╝  ╚═════╝    ╚═╝   ╚══════╝╚══════╝╚═╝  ╚═╝
 ```
 
-# Butler Pane
+# GitButler for Tern
 
 > [!NOTE]
-> GitButler workspaces in Tern panes. Source: [github.com/edheltzel/Butler-Pane](https://github.com/edheltzel/Butler-Pane)
+> GitButler workspaces in Tern panes. Source: [github.com/edheltzel/gitbutler-for-tern](https://github.com/edheltzel/gitbutler-for-tern)
 
-Butler Pane is a [Tern](https://docs.stencil.so/tern/index.html) plugin that brings [GitButler](https://gitbutler.com) workspaces into your terminal. It adds a status bar segment, a workspace block with one lane per branch stack, a diff block, native rendering for `but status`, `but diff`, `but show` and `but oplog`, and palette commands for setting up a folder, pulling upstream, and opening `but tui` or the GitButler app. Every change it makes runs through the `but` CLI, so it never writes with raw git.
+GitButler for Tern is a [Tern](https://docs.stencil.so/tern/index.html) plugin that brings [GitButler](https://gitbutler.com) workspaces into your terminal. It adds a status bar segment, a workspace block with one lane per branch stack, a diff block, native rendering for `but status`, `but diff`, `but show` and `but oplog`, and palette commands for setting up a folder, pulling upstream, and opening `but tui` or the GitButler app. Every change it makes runs through the `but` CLI, so it never writes with raw git.
 
-![A shell beside the Butler Pane workspace block, showing an Uncommitted lane and two branch stacks](docs/images/workspace.png)
+![A shell beside the GitButler for Tern workspace block, showing an Uncommitted lane and two branch stacks](docs/images/workspace.png)
 
 *Screenshots on this page come from a small demo repository with two stacks (`response-cache` and `units-flag`), so they show more than the tutorial's single file.*
 
-## Tutorial: your first commit with Butler Pane
+## Tutorial: your first commit with GitButler for Tern
 
 In this tutorial, we will install the plugin, set up a practice folder, and use the workspace block to look at a change, commit it to a branch, and undo it. It takes about ten minutes. We work in a throwaway folder in `/tmp`, so nothing we do touches your real projects.
 
@@ -35,8 +35,8 @@ You need:
 First, we clone the plugin and link its `plugin/` folder into Tern:
 
 ```sh
-git clone https://github.com/edheltzel/Butler-Pane.git
-cd Butler-Pane
+git clone https://github.com/edheltzel/gitbutler-for-tern.git
+cd gitbutler-for-tern
 tern plugin link plugin
 tern plugin list
 ```
@@ -140,7 +140,7 @@ In this tutorial, you:
   ![The board view: the toolbar, the Uncommitted column with checkboxes, a column per stack, and drop buttons on the branches and commits](docs/images/board.png)
 - **f** pulls: it checks the target branch (for example `origin/main`), says `Already up to date` when there is nothing new, and otherwise shows the new commit count and predicted branch or uncommitted-file conflicts. Press **y** to check again; a changed plan requires another confirmation before pulling. Pulling rebases every applied branch onto the target. The result reports actual branch and unresolved file conflicts, or warns when the result or worktree status could not be verified; **z** undoes the pull. When the target is ahead, the bottom line reads `N behind upstream`.
 - **L** lands a branch with `but land --yes`, which updates the target branch directly without a pull request. Skip it in repositories where work must land through a PR.
-- Open the command palette and run **GitButler: Open but tui** to open GitButler's terminal UI in a floating pane over your shell. Running it again focuses that workspace's live TUI instead of opening another. Run **GitButler: Open in GitButler app** to open the desktop app on the same workspace.
+- Open the command palette and run **GitButler: Open TUI** to open GitButler's terminal UI in a floating pane over your shell. Running it again focuses that workspace's live TUI instead of opening another. Run **GitButler: Open GUI** to open the desktop app on the same workspace.
 
   ![but tui in a floating pane over the shell, beside the workspace block](docs/images/but-tui.png)
 - Run **GitButler: Set up this folder** in an existing git repository to start using GitButler there. It refuses your home folder and `/`.
