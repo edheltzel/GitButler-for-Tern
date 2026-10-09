@@ -843,7 +843,7 @@ local function stacks_view(state: State, model: gb.Model): Node
 					status_badge(b),
 				}))
 				if below then
-					table.insert(kids, sp("stacked on " .. gb.label(below), "bp-dim"))
+					table.insert(kids, sp("stacked on " .. gb.label(below), "bp-dim bp-clip"))
 				end
 			elseif r.kind == "commit" then
 				local c = commit_of_row(model, r)
@@ -995,7 +995,7 @@ local function branches_view(state: State, model: gb.Model): Node
 			}))
 		end
 		if b == nil or #b.commits == 0 then
-			table.insert(spine, sp("No commits yet. Mark files and press c to commit here.", "bp-dim"))
+			table.insert(spine, sp("No commits yet. Mark files and press c to commit here.", "bp-dim bp-clip"))
 		end
 		if b then
 			local count = #b.commits .. (if #b.commits == 1 then " commit" else " commits")
