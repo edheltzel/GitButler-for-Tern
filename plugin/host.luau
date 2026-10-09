@@ -962,21 +962,25 @@ local function branches_view(state: State, model: gb.Model): Node
 		end
 		table.insert(rest, ui.badge(if below then "stacked on " .. gb.label(below) else "on the target", "muted"))
 		local spine: { Node } = {}
-		local used = 0
+		-- Budgeted in px, not list rows: a commit block costs its title line, the
+		-- .bp-sp-b padding (2 + 10) and title gap (2) plus 3 for a badge in the
+		-- title; each file line costs one LH (styles.css .bp-sp-b / .bp-files).
+		local SPINE_COMMIT, SPINE_FILE = LH + 17, LH
+		local budget, used = room * ROW, 0
 		for ci, c in (if b then b.commits else {}) do
-			if used + 1 > room then
+			if used + SPINE_COMMIT > budget then
 				hidden = #(b :: gb.Branch).commits - ci + 1
 				break
 			end
 			-- a commit shows as many of its files as still fit; the rest are
 			-- counted on its title line, so the count never takes a line itself
-			local fit = math.max(0, math.min(#c.files, room - used - 1))
+			local fit = math.max(0, math.min(#c.files, (budget - used - SPINE_COMMIT) // SPINE_FILE))
 			local files: { Node } = {}
 			for fi = 1, fit do
 				local f = c.files[fi]
 				table.insert(files, el("bp-f", { sp(letter(f.change), "bp-ch bp-ch-" .. letter(f.change)), sp(f.path, "bp-path"), sp(f.id, "bp-id") }))
 			end
-			used += 1 + fit
+			used += SPINE_COMMIT + fit * SPINE_FILE
 			table.insert(spine, el("bp-sp " .. lane_class(row.lane), {
 				el("bp-sp-g", { el("bp-sp-line"), el(if ci == 1 then "bp-dot bp-ring" else "bp-dot") }),
 				el("bp-sp-b", {

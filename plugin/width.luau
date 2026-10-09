@@ -14,7 +14,8 @@ local ZERO: { { number } } = {
 	{ 0x0591, 0x05BD }, { 0x0610, 0x061A }, { 0x064B, 0x065F }, { 0x0E31, 0x0E31 },
 	{ 0x0E34, 0x0E3A }, { 0x0E47, 0x0E4E }, { 0x1AB0, 0x1AFF }, { 0x1DC0, 0x1DFF },
 	{ 0x200B, 0x200F }, { 0x2028, 0x202E }, { 0x2060, 0x2064 }, { 0x20D0, 0x20FF },
-	{ 0xFE00, 0xFE0F }, { 0xFE20, 0xFE2F }, { 0xFEFF, 0xFEFF }, { 0xE0100, 0xE01EF },
+	{ 0xFE00, 0xFE0F }, { 0xFE20, 0xFE2F }, { 0xFEFF, 0xFEFF }, { 0xE0020, 0xE007F },
+	{ 0xE0100, 0xE01EF },
 }
 
 local WIDE: { { number } } = {
@@ -71,19 +72,32 @@ local function is_skin_tone(c: number): boolean
 	return c >= 0x1F3FB and c <= 0x1F3FF
 end
 
+-- Emoji-capable code points (Extended Pictographic, block-level): only these
+-- join across a ZWJ (UAX #29 GB11).
+local function is_pictographic(c: number): boolean
+	return (c >= 0x1F000 and c <= 0x1FAFF) or (c >= 0x2600 and c <= 0x27BF)
+		or (c >= 0x2300 and c <= 0x23FF) or (c >= 0x2B00 and c <= 0x2BFF)
+		or (c >= 0x2190 and c <= 0x21FF) or c == 0x00A9 or c == 0x00AE
+end
+
 -- Cells of one line, one emoji sequence at a time. Invalid UTF-8 counts one
 -- cell per byte.
 function width.cells(line: string): number
 	local ok, n = pcall(function(): number
 		local w = 0
 		local last = 0 -- cells of the previous visible glyph
-		local joining = false -- a ZWJ just passed: the next code point joins that glyph
+		local pict = false -- the previous visible glyph is an emoji
+		local joining = false -- an emoji then a ZWJ: a following emoji joins it
 		local flag_open = false -- one regional indicator is waiting for its pair
 		for _, c in utf8.codes(line) do
-			if c == 0x200D then
-				joining = true
-			elseif joining then
+			if joining then
 				joining = false
+				if is_pictographic(c) then
+					continue -- joined into the emoji before the ZWJ: no extra cells
+				end
+			end
+			if c == 0x200D then
+				joining = pict
 			elseif c == 0xFE0F then
 				-- emoji presentation: a text-default symbol becomes two cells
 				if last == 1 then
@@ -107,6 +121,7 @@ function width.cells(line: string): number
 				else
 					w += 2
 					last = 2
+					pict = true
 					flag_open = true
 				end
 			else
@@ -115,6 +130,7 @@ function width.cells(line: string): number
 				w += cw
 				if cw > 0 then
 					last = cw
+					pict = is_pictographic(c)
 				end
 			end
 		end
