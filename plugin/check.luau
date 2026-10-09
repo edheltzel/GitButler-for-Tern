@@ -184,6 +184,9 @@ assert(width.cells("a\u{1F3FD}") == 3, "skin tone without an emoji base is its o
 assert(width.cells("1\u{FE0F}\u{20E3}") == 2, "keycap is one emoji")
 assert(width.cells("🌍\u{1F3FD}") == 4, "skin tone needs an Emoji_Modifier_Base")
 assert(width.cells("ש\u{05C1}") == 1, "Hebrew point is zero width")
+assert(width.cells("👩\u{200D}❤\u{FE0E}\u{200D}👩") == 5, "VS15 breaks a ZWJ sequence")
+assert(width.cells("👩\u{200D}❤\u{FE0F}\u{200D}👩") == 2, "couple with heart is one glyph")
+assert(width.cells("\u{1100}\u{1161}") == 2, "decomposed Hangul syllable is one block")
 assert(width.cells("→ x") == 3)
 assert(width.cells("\255\254") == 2)
 
