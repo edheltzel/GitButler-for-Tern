@@ -212,5 +212,7 @@ a, b, c, d = width.slice(10, 1, 4)
 assert(a == 1 and b == 3 and not c and d, "at the top: three rows and the marker below")
 a, b, c, d = width.slice(10, 10, 4)
 assert(a == 8 and b == 10 and c and not d, "at the bottom: the marker above and three rows")
+a, b, c, d = width.slice(0, 1, -1)
+assert(a == 1 and b == 0 and not c and not d, "an empty list is an empty range, whatever the room")
 
 print("parse: ok")

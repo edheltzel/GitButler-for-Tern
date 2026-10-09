@@ -375,7 +375,9 @@ end
 -- whether the "↑ more" / "↓ more" lines fit too: rows plus the markers it
 -- allows never exceed `room`, and row `at` always shows.
 function width.slice(total: number, at: number, room: number): (number, number, boolean, boolean)
-	if total <= room then
+	if total <= 0 then
+		return 1, 0, false, false
+	elseif total <= room then
 		return 1, total, false, false
 	end
 	if room <= 1 then
