@@ -1,5 +1,5 @@
 --!strict
--- Terminal cells a string takes, for sizing the workspace dock. Pure: no
+-- Terminal cells a string takes, and which list rows fit, for sizing the workspace views. Pure: no
 -- `tern`, so `luau check.luau` can run it. Wide is Unicode East Asian Width
 -- W/F plus emoji presentation, zero is combining marks, format controls and
 -- variation selectors; ranges are block-level, so a rare unassigned code point
@@ -95,8 +95,12 @@ function width.cells(line: string): number
 					w -= 1
 					last = 1
 				end
-			elseif is_skin_tone(c) and last == 2 then
-				-- part of the emoji before it
+			elseif is_skin_tone(c) and last > 0 then
+				-- part of the glyph before it, which it makes a two-cell emoji
+				if last == 1 then
+					w += 1
+					last = 2
+				end
 			elseif is_flag_letter(c) then
 				if flag_open then
 					flag_open = false
@@ -117,6 +121,27 @@ function width.cells(line: string): number
 		return w
 	end)
 	return if ok then n else #line
+end
+
+-- Rows [first, last] of `total` that fit `room` lines around row `at`, and
+-- whether the "↑ more" / "↓ more" lines fit too: rows plus the markers it
+-- allows never exceed `room`, and row `at` always shows.
+function width.slice(total: number, at: number, room: number): (number, number, boolean, boolean)
+	if total <= room then
+		return 1, total, false, false
+	end
+	local n = math.max(1, room - 2)
+	local first = math.clamp(at - n // 2, 1, math.max(1, total - n + 1))
+	local last = math.min(total, first + n - 1)
+	local up, down = first > 1, last < total
+	local spare = room - (last - first + 1)
+	if up and down and spare < 2 then
+		up = false -- one line left: keep the marker below
+		down = spare >= 1
+	elseif spare < 1 then
+		up, down = false, false
+	end
+	return first, last, up, down
 end
 
 return width

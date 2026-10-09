@@ -597,22 +597,17 @@ local function file_line(state: State, row: Row, assigned: { [string]: string }?
 	return kids
 end
 
--- Rows in [first, last] of `list` around the cursor. `room` also covers the
--- "↑ N more" / "↓ N more" lines callers add when rows are hidden, so the
--- slice plus its markers never takes more than `room` lines.
-local function window(list: { Row }, cursor: string?, room: number): (number, number)
-	if #list <= room then
-		return 1, #list
-	end
+-- Rows in [first, last] of `list` around the cursor, and whether the
+-- "↑ N more" / "↓ N more" lines fit (width.slice): callers draw a marker only
+-- when its flag is set, so rows and markers never take more than `room` lines.
+local function window(list: { Row }, cursor: string?, room: number): (number, number, boolean, boolean)
 	local at = 1
 	for i, r in list do
 		if r.key == cursor then
 			at = i
 		end
 	end
-	local n = math.max(1, room - 2)
-	local first = math.clamp(at - n // 2, 1, math.max(1, #list - n + 1))
-	return first, math.min(#list, first + n - 1)
+	return width.slice(#list, at, room)
 end
 
 local function hint(keys: string): Node
@@ -756,9 +751,9 @@ local function graph_view(state: State, model: gb.Model): Node
 	if state.cx.cols < 110 then
 		room = math.max(3, room - DETAIL_LINES)
 	end
-	local lo, hi = window(list, state.cursor, room)
+	local lo, hi, up, down = window(list, state.cursor, room)
 	local lines: { Node } = {}
-	if lo > 1 then
+	if up then
 		table.insert(lines, el("bp-more", { sp("↑ " .. (lo - 1) .. " more", "bp-dim") }))
 	end
 	for i = lo, hi do
@@ -791,9 +786,9 @@ local function graph_view(state: State, model: gb.Model): Node
 		end
 		table.insert(lines, pickable(state, r, "bp-r", { el("bp-ref", ref), graph(i, r), el("bp-msg", msg) }))
 	end
-	if hi < #list then
+	if down then
 		table.insert(lines, el("bp-more", { sp("↓ " .. (#list - hi) .. " more", "bp-dim") }))
-	else
+	elseif hi == #list then
 		table.insert(lines, el("bp-r", { el("bp-ref", { ui.badge("base", "muted") }), graph(base, nil), el("bp-msg", { sp("common base", "bp-dim") }) }, { key = "base" }))
 	end
 	local left = el("bp-ga", {
@@ -815,14 +810,14 @@ local function stacks_view(state: State, model: gb.Model): Node
 	local room = math.max(2, fit_lines(list_px(state) - 5 * LH) // 2 // col_lines) -- cards are two lines
 	local tray: { Node } = { sp("Uncommitted " .. #model.unassigned, "bp-tray-h") }
 	local chips = state.lanes[1] or {}
-	local tlo, thi = window(chips, state.cursor, math.max(1, (state.cx.cols - 20) // 24))
-	if tlo > 1 then
+	local tlo, thi, tup, tdown = window(chips, state.cursor, math.max(1, (state.cx.cols - 20) // 24))
+	if tup then
 		table.insert(tray, sp("+" .. (tlo - 1), "bp-dim"))
 	end
 	for i = tlo, thi do
 		table.insert(tray, pickable(state, chips[i], "bp-chip", file_line(state, chips[i], nil)))
 	end
-	if thi < #chips then
+	if tdown then
 		table.insert(tray, sp("+" .. (#chips - thi) .. " more", "bp-dim"))
 	end
 	local cols: { Node } = {}
@@ -833,9 +828,9 @@ local function stacks_view(state: State, model: gb.Model): Node
 				table.insert(rows, r)
 			end
 		end
-		local lo, hi = window(rows, state.cursor, room)
+		local lo, hi, up, down = window(rows, state.cursor, room)
 		local kids: { Node } = {}
-		if lo > 1 then
+		if up then
 			table.insert(kids, sp("↑ " .. (lo - 1) .. " more", "bp-dim"))
 		end
 		for i = lo, hi do
@@ -863,7 +858,7 @@ local function stacks_view(state: State, model: gb.Model): Node
 				table.insert(kids, pickable(state, r, "bp-f", file_line(state, r, assigned)))
 			end
 		end
-		if hi < #rows then
+		if down then
 			table.insert(kids, sp("↓ " .. (#rows - hi) .. " more", "bp-dim"))
 		end
 		table.insert(cols, el("bp-sc " .. lane_class(lane), kids))
@@ -894,9 +889,9 @@ local function branches_view(state: State, model: gb.Model): Node
 	if state.cx.cols < 110 then
 		side_room = math.max(3, side_room // 2) -- the branch pane stacks below
 	end
-	local lo, hi = window(list, state.cursor, side_room)
+	local lo, hi, up, down = window(list, state.cursor, side_room)
 	local last = 0
-	if lo > 1 then
+	if up then
 		table.insert(side, sp("↑ " .. (lo - 1) .. " more", "bp-dim"))
 	end
 	for i = lo, hi do
@@ -917,7 +912,7 @@ local function branches_view(state: State, model: gb.Model): Node
 			}))
 		end
 	end
-	if hi < #list then
+	if down then
 		table.insert(side, sp("↓ " .. (#list - hi) .. " more", "bp-dim"))
 	end
 
@@ -941,15 +936,15 @@ local function branches_view(state: State, model: gb.Model): Node
 		table.insert(main, sp(if stack and stack.branches[1] then "Assigned to " .. gb.label(stack.branches[1]) else "Uncommitted changes", "bp-h1"))
 		table.insert(main, el("bp-badges", { ui.badge(#all .. (if #all == 1 then " file" else " files"), "warning") }))
 		local files: { Node } = {}
-		local flo, fhi = window(all, state.cursor, room)
-		if flo > 1 then
+		local flo, fhi, fup, fdown = window(all, state.cursor, room)
+		if fup then
 			table.insert(files, sp("↑ " .. (flo - 1) .. " more", "bp-dim"))
 		end
 		for i = flo, fhi do
 			local r = all[i]
 			table.insert(files, el("bp-f" .. (if r.key == state.cursor then " bp-sel" else ""), file_line(state, r, assigned)))
 		end
-		if fhi < #all then
+		if fdown then
 			table.insert(files, sp("↓ " .. (#all - fhi) .. " more", "bp-dim"))
 		end
 		table.insert(main, el("bp-files", files))
@@ -958,20 +953,19 @@ local function branches_view(state: State, model: gb.Model): Node
 		local b = branch_of_row(model, row)
 		local below = if b then below_of(model, b) else nil
 		table.insert(main, sp(row.label, "bp-h1"))
-		local badges: { Node } = { status_badge(b) }
-		if b then
-			table.insert(badges, ui.badge(#b.commits .. (if #b.commits == 1 then " commit" else " commits"), "neutral"))
-			if b.review then
-				table.insert(badges, ui.badge("PR " .. b.review, "info"))
-			end
+		-- the commit count leads, so a clipped badge row still shows hidden commits
+		local badges: { Node } = {}
+		local hidden = 0
+		local rest: { Node } = { status_badge(b) }
+		if b and b.review then
+			table.insert(rest, ui.badge("PR " .. b.review, "info"))
 		end
-		table.insert(badges, ui.badge(if below then "stacked on " .. gb.label(below) else "on the target", "muted"))
+		table.insert(rest, ui.badge(if below then "stacked on " .. gb.label(below) else "on the target", "muted"))
 		local spine: { Node } = {}
 		local used = 0
 		for ci, c in (if b then b.commits else {}) do
 			if used + 1 > room then
-				-- counted on the badge row, so the summary never takes a line
-				table.insert(badges, ui.badge((#(b :: gb.Branch).commits - ci + 1) .. " not shown", "muted"))
+				hidden = #(b :: gb.Branch).commits - ci + 1
 				break
 			end
 			-- a commit shows as many of its files as still fit; the rest are
@@ -998,6 +992,13 @@ local function branches_view(state: State, model: gb.Model): Node
 		end
 		if b == nil or #b.commits == 0 then
 			table.insert(spine, sp("No commits yet. Mark files and press c to commit here.", "bp-dim"))
+		end
+		if b then
+			local count = #b.commits .. (if #b.commits == 1 then " commit" else " commits")
+			table.insert(badges, ui.badge(if hidden > 0 then count .. ", " .. hidden .. " not shown" else count, if hidden > 0 then "warning" else "neutral"))
+		end
+		for _, badge in rest do
+			table.insert(badges, badge)
 		end
 		table.insert(main, el("bp-badges", badges))
 		table.insert(main, el("bp-spine", spine))

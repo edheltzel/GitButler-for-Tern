@@ -171,9 +171,26 @@ assert(width.cells("e\u{301}") == 1)
 assert(width.cells("☺\u{FE0F}") == 2, "VS16 makes a text symbol an emoji")
 assert(width.cells("⌚\u{FE0E}") == 1, "VS15 makes an emoji text")
 assert(width.cells("👍🏽") == 2, "skin tone joins its emoji")
+assert(width.cells("☝🏽") == 2, "skin tone widens a text-width base")
+assert(width.cells("⛹🏽") == 2, "skin tone widens a text-width base")
 assert(width.cells("👨\u{200D}👩\u{200D}👧") == 2, "ZWJ family is one glyph")
 assert(width.cells("🇺🇸🇬🇧") == 4, "flags are regional indicator pairs")
 assert(width.cells("→ x") == 3)
 assert(width.cells("\255\254") == 2)
+
+-- width.slice: rows around the cursor plus the markers it allows never
+-- exceed the room, and the cursor's row always shows.
+for _, room in { 1, 2, 3, 4, 7 } do
+	for at = 1, 10 do
+		local first, last, up, down = width.slice(10, at, room)
+		local lines = (last - first + 1) + (if up then 1 else 0) + (if down then 1 else 0)
+		assert(at >= first and at <= last, `cursor {at} hidden at room {room}`)
+		assert(lines <= math.max(room, 1), `room {room}, cursor {at}: {lines} lines`)
+		assert(not up or first > 1, "an up marker means rows are hidden above")
+		assert(not down or last < 10, "a down marker means rows are hidden below")
+	end
+end
+local a, b, c, d = width.slice(3, 2, 5)
+assert(a == 1 and b == 3 and not c and not d, "everything fits: no markers")
 
 print("parse: ok")
