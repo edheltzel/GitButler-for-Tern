@@ -8,7 +8,7 @@ The Tern package: the only directory linked into Tern (`tern plugin link plugin`
 
 - `plugin.toml`: manifest declaring the `workspace` and `diff` blocks, the `status`, `diff`, `show` and `oplog` lenses, and `styles.css`
 - `gb.luau`: shared by both halves: `gb.root` (managed-folder detection), `gb.run` (async `but` runner), JSON → model helpers
-- `host.luau`: host half: the workspace block (lanes, graph, stacks and branches views, sheets, actions including `f` pull) and the diff block
+- `host.luau`: host half: the workspace block (lanes, graph, stacks, branches and board views, sheets, actions including `f` pull and the board's squash, uncommit, amend-into, discard and redo) and the diff block
 - `styles.css`: the workspace views' styles, every selector scoped to `[data-surface="plugin.gitbutler.workspace"]` (plugin sheets are window-global). No `ch` unit in Tern CSS: use `calc(var(--sf-cw) * N)`. Naming a stylesheet in the manifest before the file exists makes the plugin unusable until Tern restarts
 - `lenses.luau`: command lenses plus the `spawn` filter (`BUT_THEME`, `BUT_PAGER`)
 - `parse.luau`: pure readers for `but`'s human output, used only by the lenses
@@ -27,6 +27,8 @@ The Tern package: the only directory linked into Tern (`tern plugin link plugin`
 - Every surface uses `gb.root` to decide whether a folder is GitButler-managed. Don't add a second check.
 - `parse.luau` and `width.luau` stay free of `tern` so `luau check.luau` can run them.
 - Host-only APIs (`tern.block`, `tern.lens`, `tern.pane`) stay out of `window.luau`, and window-only APIs (`tern.command`, `tern.chrome`, `tern.route`, `cx.session`) stay out of the host files.
+- Board drops and right-click items run the same action functions as the keys, through the same confirm and push-state guards; never a second, unguarded path. Right-click item ids are plain labels mapped by `MENU` (Tern shows the id as the label); the row comes from the event's node id.
+- `move` (move to a branch, reorder) stays refused while an uncommitted file shares a path with the moved change: a failed `but` 0.22.3 move drops the commit and those changes with no oplog entry (`DESIGN.md` finding 6).
 
 ## Work Guidance
 
@@ -35,6 +37,7 @@ The Tern package: the only directory linked into Tern (`tern plugin link plugin`
 - Pass `but` arguments as an argv list (no shell). Mutations add `--json` and are checked by exit status.
 - Async callbacks must check liveness (`running[pane] == state` / `pane_alive`) before touching state or sending effects.
 - Saving any file here reloads every plugin in the user's real Tern. A reload that fails mid-edit kills open blocks. To test a deliberately broken build, link a copy (`cp -R plugin /tmp/gbp`) into the isolated Tern instead.
+- Testing the board with `tern ctl --control … click X Y` (window pixels; a third arg `right` right-clicks): a hidden test window delivers clicks and renders seconds late, so wait for the result before clicking again. It also keeps a new block at 80×24 until a relaunch restores it at its real size.
 
 ## Verification
 

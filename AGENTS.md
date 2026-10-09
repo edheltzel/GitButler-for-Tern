@@ -61,6 +61,8 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
 - `tern ctl wait` and `tern ctl type` can hang: wrap `ctl` calls in `timeout`, and use `tern send` for keys.
 - A plugin reload does not emit `window_start`/`focus`. Window state is re-bootstrapped with `tern.timer(0, …)`.
 - `but` 0.22.3 cannot assign an uncommitted file to a branch without committing it (`rub` is retired). See `DESIGN.md`.
+- `but` 0.22.3 `move` can lose work: when it fails with "Uncommitted files would be overwritten by checkout" it still drops the commit and the dependent uncommitted change, with no oplog entry. Recover with `but resolve <path>` then `but oplog restore <sha>`. See `DESIGN.md` finding 6.
+- One slow plugin load (over 50 ms, e.g. two Terns reloading on the same save) makes Tern disable the plugin's window half until the next reload: palette commands, global keys, `gitbutler://diff` links and the status segment stop working. `tern plugin reload` brings them back.
 - CLI ids (`nk`, `ymn`, `zn:n`) are snapshot-local. Don't hold them across a refresh for a later mutation.
 - `but tui` and `but gui` are real commands; the plugin opens `but tui` in a floated pane and `but gui` as the desktop app. Tern picks a float's size; the plugin API can't set it.
 - `but` 0.22.3 has no `but init`. `but setup --init` creates the git repo (empty commit) when there is none, then sets GitButler up; the plugin's "Set up this folder" command runs it.
