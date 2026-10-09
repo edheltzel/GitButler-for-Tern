@@ -2131,11 +2131,15 @@ local function action_pull(state: State)
 				for _, c in list do
 					table.insert(names, if type(c) == "table" and type(c.branch) == "string" then c.branch else "?")
 				end
+				local parts: { string } = {}
 				if #names > 0 then
-					return "Pulled " .. base .. " with conflicts in " .. table.concat(names, ", ") .. ". z undoes the pull.", "warning"
+					table.insert(parts, "conflicts in " .. table.concat(names, ", "))
 				end
 				if worktree then
-					return "Pulled " .. base .. ". Uncommitted changes conflicted with upstream: check the Uncommitted lane. z undoes the pull.", "warning"
+					table.insert(parts, "uncommitted changes conflicted with upstream (check the Uncommitted lane)")
+				end
+				if #parts > 0 then
+					return "Pulled " .. base .. " with " .. table.concat(parts, " and ") .. ". z undoes the pull.", "warning"
 				end
 				return "Pulled " .. base
 			end)
