@@ -378,6 +378,15 @@ function width.slice(total: number, at: number, room: number): (number, number, 
 	if total <= room then
 		return 1, total, false, false
 	end
+	if room <= 1 then
+		return at, at, false, false
+	end
+	-- near an end only one marker is needed, so the rows get the other line
+	if at <= room - 1 then
+		return 1, room - 1, false, true
+	elseif at >= total - room + 2 then
+		return total - room + 2, total, true, false
+	end
 	local n = math.max(1, room - 2)
 	local first = math.clamp(at - n // 2, 1, math.max(1, total - n + 1))
 	local last = math.min(total, first + n - 1)

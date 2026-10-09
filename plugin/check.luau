@@ -203,9 +203,14 @@ for _, room in { 1, 2, 3, 4, 7 } do
 		assert(lines <= math.max(room, 1), `room {room}, cursor {at}: {lines} lines`)
 		assert(not up or first > 1, "an up marker means rows are hidden above")
 		assert(not down or last < 10, "a down marker means rows are hidden below")
+		assert(lines == room, `room {room}, cursor {at}: {lines} lines leave room unused`)
 	end
 end
 local a, b, c, d = width.slice(3, 2, 5)
 assert(a == 1 and b == 3 and not c and not d, "everything fits: no markers")
+a, b, c, d = width.slice(10, 1, 4)
+assert(a == 1 and b == 3 and not c and d, "at the top: three rows and the marker below")
+a, b, c, d = width.slice(10, 10, 4)
+assert(a == 8 and b == 10 and c and not d, "at the bottom: the marker above and three rows")
 
 print("parse: ok")
