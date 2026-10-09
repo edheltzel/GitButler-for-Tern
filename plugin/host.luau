@@ -346,7 +346,7 @@ end
 -- cycles them; the choice is kept in tern.kv for new blocks. They draw with
 -- `el` nodes styled by styles.css (scoped to this block). See DESIGN.md
 -- for viewport anchoring and height budgets.
-local VIEWS = { "lanes", "graph", "stacks", "branches" }
+local VIEWS = { "lanes", "graph", "stacks", "branches", "board" }
 
 -- Which rows the keyboard walks in each view.
 local function walkable(state: State, row: Row): boolean
@@ -368,6 +368,10 @@ local function walkable(state: State, row: Row): boolean
 		return row.kind ~= "cfile"
 	elseif view == "branches" then
 		return row.kind == "file" or row.kind == "branch"
+	elseif view == "board" and row.kind == "cfile" then
+		-- the selected commit opens to its files
+		local cur = selected(state)
+		return cur ~= nil and (cur.kind == "commit" or cur.kind == "cfile") and cur.changeId == row.changeId
 	end
 	return true
 end
@@ -1428,6 +1432,18 @@ local function with_branch(state: State, title: string, with_new: boolean, done:
 	end)
 end
 
+-- A fixed target (a board drop) skips the branch picker; NEW_BRANCH asks
+-- for the new branch's name.
+local function to_branch(state: State, target: string?, title: string, with_new: boolean, done: (string) -> ())
+	if target == NEW_BRANCH then
+		prompt(state, "New branch name", "", done)
+	elseif target ~= nil and target ~= "" then
+		done(target)
+	else
+		with_branch(state, title, with_new, done)
+	end
+end
+
 local function append(list: { string }, more: { string }?): { string }
 	local out = table.clone(list)
 	for _, v in more or {} do
@@ -1587,7 +1603,7 @@ end
 
 
 
-local function action_commit(state: State)
+local function action_commit(state: State, target: string?)
 	local marked = has_marks(state)
 	local picked: string? = nil
 	if not marked then
@@ -1605,7 +1621,7 @@ local function action_commit(state: State)
 			notify(state, "info", "Nothing to commit.")
 			return
 		end
-		with_branch(state, "Commit " .. what .. " to", true, function(branch: string)
+		to_branch(state, target, "Commit " .. what .. " to", true, function(branch: string)
 			prompt(state, "Commit message for " .. branch, "", function(message: string)
 				if message == "" then
 					notify(state, "warning", "Commit cancelled: empty message")
@@ -1644,11 +1660,53 @@ local function action_commit(state: State)
 	end
 end
 
+-- `but` 0.22.3: a `move` that fails with "Uncommitted files would be
+-- overwritten by checkout" still drops the commit and those uncommitted
+-- changes, and records no oplog entry (reproduced with the bare CLI). So a
+-- move is refused while an uncommitted file shares a path with the change.
+local function move_blocked(state: State, row: Row): boolean
+	local moved: { [string]: boolean } = {}
+	for _, r in state.rows do
+		if r.kind == "cfile" and r.changeId == row.changeId and r.path and (row.kind == "commit" or r.path == row.path) then
+			moved[r.path] = true
+		end
+	end
+	local clash: { string } = {}
+	for _, r in state.rows do
+		if r.kind == "file" and r.path and moved[r.path] and not table.find(clash, r.path) then
+			table.insert(clash, r.path)
+		end
+	end
+	if #clash == 0 then
+		return false
+	end
+	notify(state, "warning", table.concat(clash, ", ") .. " has uncommitted changes in a file this commit touches. "
+		.. "Commit, absorb or discard them first: but 0.22.3 can lose the commit and those changes if the move fails. Nothing was modified.")
+	return true
+end
+
+-- The stable ref `but` takes for a commit or committed-file row, or nil and
+-- the reason it can't be targeted.
+local function change_ref(row: Row): (string?, string?)
+	if row.kind == "cfile" and row.path and string.find(row.path, ":", 1, true) then
+		return nil, "Cannot safely target a file containing ':': " .. row.path .. ". Nothing was modified."
+	end
+	local cid = row.changeId
+	if cid == nil or cid == "" then
+		return nil, "That commit has no stable id. Nothing was modified."
+	end
+	return (if row.kind == "cfile" and row.path then cid .. ":" .. row.path else cid), nil
+end
+
+local function change_what(row: Row): string
+	return if row.kind == "commit" then "commit " .. row.id .. " " .. row.label else row.label .. " (" .. row.id .. ")"
+end
+
 -- Moves the selected change to a branch. `but` 0.22 has no command that
 -- only assigns an uncommitted file (`rub` is retired), so an uncommitted
 -- file is amended into the branch's tip commit, or committed when the
 -- branch has none; committed files and commits use `but move`.
-local function action_move(state: State)
+local function action_move(state: State, target: string?)
 	local row = selected(state)
 	if row == nil or row.kind == "branch" then
 		notify(state, "warning", "Select a file or commit to move.")
@@ -1661,7 +1719,7 @@ local function action_move(state: State)
 				notify(state, "warning", "Select a file to move.")
 				return
 			end
-			with_branch(state, "Move " .. what .. " to", false, function(branch: string)
+			to_branch(state, target, "Move " .. what .. " to", false, function(branch: string)
 				local empty = true
 				for _, stack in (if state.model then state.model.stacks else {}) do
 					for _, b in stack.branches do
@@ -1694,21 +1752,25 @@ local function action_move(state: State)
 		end)
 		return
 	end
-	if row.kind == "cfile" and row.path and string.find(row.path, ":", 1, true) then
-		notify(state, "warning", "Cannot safely target a file containing ':': " .. row.path .. ". Nothing was modified.")
-		return
-	end
-	local cid = row.changeId
-	local arg = if cid and cid ~= "" then (if row.kind == "cfile" and row.path then cid .. ":" .. row.path else cid) else nil
+	local arg, why = change_ref(row)
 	if arg == nil then
-		notify(state, "warning", "That commit has no stable id. Nothing was modified.")
+		notify(state, "warning", why :: string)
 		return
 	end
-	local what = if row.kind == "commit" then "commit " .. row.id .. " " .. row.label else row.label .. " (" .. row.id .. ")"
+	local cid = row.changeId :: string
+	local what = change_what(row)
 	local source = row.branch or ""
-	with_branch(state, "Move " .. what .. " to", false, function(branch: string)
+	if move_blocked(state, row) then
+		return
+	end
+	to_branch(state, target, "Move " .. what .. " to", false, function(branch: string)
 		local args = { "move", arg, "-b", branch }
-		local names = { branch }
+		-- a name typed for a new branch that isn't applied gets created by the
+		-- move; checking it would read as "missing, so pushed"
+		local names: { string } = {}
+		if target ~= NEW_BRANCH or (state.model ~= nil and name_applied(state.model, branch)) then
+			table.insert(names, branch)
+		end
 		if source ~= "" then
 			table.insert(names, source)
 		end
@@ -1717,6 +1779,180 @@ local function action_move(state: State)
 		}, names, { cid :: string }, args, function()
 			mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " to " .. branch)
 		end)
+	end)
+end
+
+-- Branches a rewrite of these rows touches, for the push-state guard.
+local function names_of(rows: { Row }): { string }
+	local out: { string } = {}
+	for _, r in rows do
+		if r.branch and r.branch ~= "" and not table.find(out, r.branch) then
+			table.insert(out, r.branch)
+		end
+	end
+	return out
+end
+
+-- The selected commit or committed file and its stable ref, or nil after
+-- saying why it can't be used.
+local function held_change(state: State): (Row?, string?)
+	local row = selected(state)
+	if row == nil or (row.kind ~= "commit" and row.kind ~= "cfile") then
+		notify(state, "warning", "Select a commit or a committed file.")
+		return nil, nil
+	end
+	local ref, why = change_ref(row)
+	if ref == nil then
+		notify(state, "warning", why :: string)
+		return nil, nil
+	end
+	return row, ref
+end
+
+-- Squashes the selected commit into `target`, keeping the target's message
+-- (no editor opens), or moves the selected committed file's changes into it.
+local function action_squash(state: State, target: Row)
+	local row, ref = held_change(state)
+	if row == nil or ref == nil then
+		return
+	end
+	local tid = target.changeId
+	if tid == nil or tid == "" or tid == row.changeId then
+		notify(state, "warning", "Pick a different commit to squash into.")
+		return
+	end
+	local args = { "squash", ref, "-t", tid }
+	if row.kind == "commit" then
+		table.insert(args, "--use-target-message")
+	end
+	local what = change_what(row)
+	local verb = if row.kind == "commit" then "Squash " else "Move "
+	confirm_rewrite(state, verb .. what .. " into " .. target.id, {
+		if row.kind == "commit"
+			then "The two commits become one with " .. target.id .. "'s message (" .. target.label .. ")."
+			else "The file's changes leave their commit and join " .. target.id .. " " .. target.label .. ".",
+	}, names_of({ row, target }), { row.changeId :: string, tid }, args, function()
+		mutate(state, "Squashing…", args, MUTATE_TIMEOUT_MS, (if row.kind == "commit" then "Squashed " else "Moved ") .. what .. " into " .. target.id)
+	end)
+end
+
+-- Moves the selected commit to sit directly above `target`, on its branch.
+local function action_place_above(state: State, target: Row)
+	local row, ref = held_change(state)
+	if row == nil or ref == nil then
+		return
+	end
+	local tid = target.changeId
+	if move_blocked(state, row) then
+		return
+	end
+	if row.kind ~= "commit" or tid == nil or tid == "" or tid == row.changeId then
+		notify(state, "warning", "Pick a different commit to place it above.")
+		return
+	end
+	local args = { "move", ref, "--above", tid }
+	local what = change_what(row)
+	local names = names_of({ row, target })
+	confirm_rewrite(state, "Move " .. what .. " above " .. target.id, {
+		"Reorders history on " .. table.concat(names, " and ") .. ".",
+	}, names, { row.changeId :: string, tid }, args, function()
+		mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " above " .. target.id)
+	end)
+end
+
+-- Turns the selected commit or committed file back into uncommitted changes.
+local function action_uncommit(state: State)
+	local row, ref = held_change(state)
+	if row == nil or ref == nil then
+		return
+	end
+	local args = { "uncommit", ref }
+	local what = change_what(row)
+	confirm_rewrite(state, "Uncommit " .. what, {
+		"Turns it back into uncommitted changes and rewrites " .. (row.branch or "its branch") .. ".",
+	}, names_of({ row }), { row.changeId :: string }, args, function()
+		mutate(state, "Uncommitting…", args, MUTATE_TIMEOUT_MS, "Uncommitted " .. what)
+	end)
+end
+
+-- Amends the checked (or selected) uncommitted files into `target`, any
+-- commit, not only a branch tip.
+local function action_amend(state: State, target: Row)
+	local tid = target.changeId
+	if tid == nil or tid == "" then
+		notify(state, "warning", "That commit has no stable id. Nothing was modified.")
+		return
+	end
+	local row = selected(state)
+	local picked = if not has_marks(state) and row and row.kind == "file" then row.path else nil
+	if picked == nil and not has_marks(state) then
+		notify(state, "warning", "Select or check the files to amend.")
+		return
+	end
+	fresh_files(state, picked, function(ids: { string }?, what: string)
+		if ids == nil then
+			notify(state, "warning", "Select or check the files to amend.")
+			return
+		end
+		local args = append({ "amend", "-t", tid }, ids)
+		confirm_rewrite(state, "Amend " .. what .. " into " .. target.id, {
+			"Rewrites commit " .. target.id .. " " .. target.label .. " and the commits above it.",
+		}, names_of({ target }), { tid }, args, function()
+			mutate(state, "Amending…", args, MUTATE_TIMEOUT_MS, "Amended " .. what .. " into " .. target.id)
+		end)
+	end)
+end
+
+-- Discards the checked or selected uncommitted files, or the selected
+-- commit, committed file or branch. Always a danger confirm; `but undo`
+-- brings it back.
+local function action_discard(state: State)
+	local row = selected(state)
+	if has_marks(state) or (row and row.kind == "file") then
+		local picked = if has_marks(state) or row == nil then nil else row.path
+		fresh_files(state, picked, function(ids: { string }?, what: string)
+			if ids == nil then
+				notify(state, "warning", "Select or check the files to discard.")
+				return
+			end
+			local args = append({ "discard" }, ids)
+			confirm(state, "Discard " .. what, {
+				"Deletes these uncommitted changes from the working tree. but undo restores them.",
+			}, args, true, function()
+				mutate(state, "Discarding…", args, MUTATE_TIMEOUT_MS, "Discarded " .. what)
+			end)
+		end)
+		return
+	end
+	if row and row.kind == "branch" then
+		if row.branch == nil or row.branch == "" then
+			notify(state, "warning", "That branch has no name to target. Nothing was modified.")
+			return
+		end
+		local args = { "discard", row.branch }
+		confirm(state, "Discard branch " .. row.label, {
+			"Deletes the branch and its commits from the workspace. but undo restores it.",
+		}, args, true, function()
+			mutate(state, "Discarding…", args, MUTATE_TIMEOUT_MS, "Discarded branch " .. row.label)
+		end)
+		return
+	end
+	local change, ref = held_change(state)
+	if change == nil or ref == nil then
+		return
+	end
+	local args = { "discard", ref }
+	local what = change_what(change)
+	confirm(state, "Discard " .. what, {
+		"Drops it from " .. (change.branch or "its branch") .. "; the commits above are rebased. but undo restores it.",
+	}, args, true, function()
+		mutate(state, "Discarding…", args, MUTATE_TIMEOUT_MS, "Discarded " .. what)
+	end)
+end
+
+local function action_redo(state: State)
+	confirm(state, "Redo the last undo", { "Re-applies the operation the last but undo reverted." }, { "redo" }, false, function()
+		mutate(state, "Redoing…", { "redo" }, MUTATE_TIMEOUT_MS, "Redone")
 	end)
 end
 
@@ -2400,6 +2636,165 @@ local function sheet_key(state: State, key: Key)
 	end
 end
 
+-- Board: the GitButler desktop layout. A toolbar, the uncommitted column,
+-- one column per stack and a new-branch column. Blocks get no drag and drop,
+-- so the GUI's drag is select-then-drop: the selected card, or the checked
+-- files, is what moves, and every card that can take it shows drop buttons.
+-- A right-click lists a card's own actions; a selected commit opens to its
+-- files. Cards are one row (ROW px with the 2px column gap).
+local BOARD_TOOLS = LH + 22 -- toolbar buttons, padding, the gap below
+local COL_CHROME = 3 + 16 + ROW + 2 -- top edge, padding, column head, its gap
+
+local function board_view(state: State, model: gb.Model): Node
+	local row = selected(state)
+	local held = if has_marks(state) or (row ~= nil and row.kind == "file") then "files" elseif row then row.kind else ""
+	local function button(label: string, act: string, class: string?): Node
+		return ui.el("button", { class = "bp-btn" .. (if class then " " .. class else ""), text = label, actions = { click = act } }, {})
+	end
+	local function drop(label: string, op: string, key: string): Node
+		return button(label, "drop=" .. op .. ":" .. key, "bp-drop")
+	end
+	-- Tern shows a menu item's action id as its label, so items are plain
+	-- labels (MENU maps them); the event's node id names the card's row.
+	local function card(r: Row, class: string, kids: { Node }, menu: { string }): Node
+		local node = pickable(state, r, "bp-card " .. class, kids)
+		local p: { [string]: any } = node.p or {}
+		p.actions = { click = "pick=" .. r.key, dblclick = "open=" .. r.key, menu = menu }
+		node.p = p
+		return node
+	end
+	local function file_card(r: Row): Node
+		return card(r, "bp-fcard", {
+			ui.el("input", { type = "checkbox", name = "mark", value = r.path or "", checked = r.path ~= nil and state.marked[r.path] == true }, {}),
+			sp(letter(r.change or ""), "bp-ch bp-ch-" .. letter(r.change or "")),
+			sp(r.label, "bp-path"),
+			sp(r.id, "bp-id"),
+		}, { "Commit…", "Move…", "Absorb", "Discard…" })
+	end
+	local function branch_card(r: Row): Node
+		local b = branch_of_row(model, r)
+		local named = r.branch ~= nil and r.branch ~= ""
+		local tail: { Node } = {}
+		if named and held == "files" then
+			table.insert(tail, drop("Commit here", "commit", r.key))
+		elseif named and (held == "cfile" or (held == "commit" and row ~= nil and row.bkey ~= r.key)) then
+			table.insert(tail, drop("Move here", "move", r.key))
+		else
+			if b and b.review then
+				table.insert(tail, ui.badge("PR " .. b.review, "info"))
+			end
+			table.insert(tail, status_badge(b))
+		end
+		return card(r, "bp-bcard", { sp("⎇ " .. r.label, "bp-bh-n"), el("bp-badges bp-end", tail) }, {
+			"Push", "Create PR", "Rename…", "New stacked branch…", "Unapply", "Land", "Discard branch…",
+		})
+	end
+	local function commit_card(r: Row): Node
+		local c = commit_of_row(model, r)
+		local kids: { Node } = { sp(r.label, "bp-t"), sp(r.id, "bp-id") }
+		if c and c.conflicted then
+			table.insert(kids, ui.badge("conflicted", "error"))
+		end
+		local other = row ~= nil and row.changeId ~= r.changeId
+		local tail: { Node } = {}
+		if held == "files" then
+			table.insert(tail, drop("Amend", "amend", r.key))
+		elseif held == "commit" and other then
+			table.insert(tail, drop("Squash", "squash", r.key))
+			table.insert(tail, drop("Above", "above", r.key))
+		elseif held == "cfile" and other then
+			table.insert(tail, drop("Move in", "squash", r.key))
+		elseif c then
+			table.insert(tail, sp(#c.files .. (if #c.files == 1 then " file" else " files"), "bp-dim"))
+		end
+		table.insert(kids, el("bp-badges bp-end", tail))
+		return card(r, "bp-ccard", kids, { "Reword…", "Move…", "Uncommit", "Discard…" })
+	end
+	local function cfile_card(r: Row): Node
+		return card(r, "bp-cfcard", {
+			sp(letter(r.change or ""), "bp-ch bp-ch-" .. letter(r.change or "")),
+			sp(r.label, "bp-path"),
+			sp(r.id, "bp-id"),
+		}, { "Move…", "Uncommit", "Discard…" })
+	end
+	local function render(r: Row): Node
+		if r.kind == "branch" then
+			return branch_card(r)
+		elseif r.kind == "commit" then
+			return commit_card(r)
+		elseif r.kind == "cfile" then
+			return cfile_card(r)
+		end
+		return file_card(r)
+	end
+
+	-- Columns wrap (CSS) about every 34 cells and wrapped rows share the height.
+	local per_line = math.max(1, state.cx.cols // 34)
+	local col_lines = math.ceil((#state.lanes + 1) / per_line)
+	local room = math.max(3, fit_lines((list_px(state) - BOARD_TOOLS) / col_lines - COL_CHROME))
+	local function column(lane: number, head: { Node }, rows: { Row }, empty: string): Node
+		local kids: { Node } = { el("bp-colh", head) }
+		local lo, hi, up, down = window(rows, state.cursor, room)
+		if up then
+			table.insert(kids, sp("↑ " .. (lo - 1) .. " more", "bp-dim"))
+		end
+		for i = lo, hi do
+			table.insert(kids, render(rows[i]))
+		end
+		if down then
+			table.insert(kids, sp("↓ " .. (#rows - hi) .. " more", "bp-dim"))
+		end
+		if #rows == 0 then
+			table.insert(kids, sp(empty, "bp-dim"))
+		end
+		return el("bp-sc bp-bcol " .. lane_class(lane), kids, { key = "L" .. lane })
+	end
+
+	local cols: { Node } = {}
+	local unc = state.lanes[1] or {}
+	local uhead: { Node } = { sp("Uncommitted", "bp-lh-n"), sp(tostring(#unc), "bp-warn") }
+	if held == "commit" or held == "cfile" then
+		table.insert(uhead, el("bp-end", { drop("Uncommit", "uncommit", "") }))
+	end
+	table.insert(cols, column(1, uhead, unc, "No uncommitted changes."))
+	for lane = 2, #state.lanes do
+		local stack = model.stacks[lane - 1]
+		local rows: { Row } = {}
+		for _, r in state.lanes[lane] do
+			if walkable(state, r) then
+				table.insert(rows, r)
+			end
+		end
+		local top = stack and stack.branches[1]
+		local head: { Node } = { sp(if top then gb.label(top) else (if stack then stack.id else "?"), "bp-lh-n") }
+		if stack and #stack.branches > 1 then
+			table.insert(head, sp("stack of " .. #stack.branches, "bp-dim"))
+		end
+		table.insert(cols, column(lane, head, rows, "No commits yet."))
+	end
+	local new: { Node } = { el("bp-colh", { sp("New branch", "bp-lh-n") }) }
+	if held == "files" then
+		table.insert(new, drop("Commit to a new branch", "newcommit", ""))
+	elseif held == "commit" or held == "cfile" then
+		table.insert(new, drop("Move to a new branch", "newmove", ""))
+	else
+		table.insert(new, button("+ Create branch", "do=n"))
+	end
+	table.insert(cols, el("bp-sc bp-bcol bp-newcol", new, { key = "new" }))
+
+	local tools = el("bp-tools", {
+		button("Commit", "do=c"),
+		button("Absorb", "do=A"),
+		button("New branch", "do=n"),
+		button("Pull", "do=f"),
+		button("Undo", "do=z"),
+		button("Redo", "do=redo"),
+		button("Oplog", "do=O"),
+		button("Discard…", "do=discard"),
+	}, { key = "tools" })
+	return ui.col({ tools, el("bp-cols", cols, { key = "cols" }) })
+end
+
 local ACTIONS: { [string]: (State) -> () } = {
 	c = action_commit,
 	m = action_move,
@@ -2450,19 +2845,102 @@ local NAMED: { [string]: string } = {
 	help = "?",
 }
 
-local function run_action(state: State, k: string): boolean
-	local action = ACTIONS[k]
-	if action == nil then
-		return false
-	end
+-- Board operations that have no key, by name (toolbar and right-click menus).
+local OPS: { [string]: (State) -> () } = {
+	redo = action_redo,
+	discard = action_discard,
+	uncommit = action_uncommit,
+}
+
+-- Runs `go` unless a read or mutation is in flight or nothing is loaded.
+local function guarded(state: State, go: () -> ())
 	if state.busy then
 		notify(state, "warning", "Wait for " .. state.busy)
 	elseif state.model == nil then
 		notify(state, "warning", "The workspace isn't loaded yet.")
 	else
-		action(state)
+		go()
 	end
+end
+
+local function run_action(state: State, k: string): boolean
+	local action = ACTIONS[k]
+	if action == nil then
+		return false
+	end
+	guarded(state, function()
+		action(state)
+	end)
 	return true
+end
+
+-- Board right-click labels: what each runs (an action key or a board op).
+local MENU: { [string]: string } = {
+	["Commit…"] = "c",
+	["Move…"] = "m",
+	["Absorb"] = "A",
+	["Discard…"] = "discard",
+	["Discard branch…"] = "discard",
+	["Push"] = "p",
+	["Create PR"] = "P",
+	["Rename…"] = "e",
+	["Reword…"] = "e",
+	["New stacked branch…"] = "N",
+	["Unapply"] = "u",
+	["Land"] = "L",
+	["Uncommit"] = "uncommit",
+}
+
+-- A board toolbar button or right-click item: selects the card's row (when
+-- there is one), then runs the action key or board op on it.
+local function board_do(state: State, k: string, key: string?)
+	if key ~= nil then
+		for _, r in state.rows do
+			if r.key == key then
+				state.cursor = key
+			end
+		end
+	end
+	if ACTIONS[k] then
+		run_action(state, k)
+	elseif OPS[k] then
+		guarded(state, function()
+			OPS[k](state)
+		end)
+	end
+end
+
+-- A board drop button: `<op>:<target row key>`. What moves is the selection
+-- (or the checked files); the target is captured by key, not position.
+local function drop_on(state: State, value: string)
+	local op, key = string.match(value, "^([^:]+):(.*)$")
+	local target: Row? = nil
+	for _, r in state.rows do
+		if r.key == key then
+			target = r
+		end
+	end
+	guarded(state, function()
+		if op == "newcommit" then
+			action_commit(state, NEW_BRANCH)
+		elseif op == "newmove" then
+			action_move(state, NEW_BRANCH)
+		elseif op == "uncommit" then
+			action_uncommit(state)
+		elseif target == nil then
+			notify(state, "warning", "That drop target is gone: the workspace changed.")
+		elseif op == "commit" then
+			action_commit(state, target.branch)
+		elseif op == "move" then
+			action_move(state, target.branch)
+		elseif op == "amend" then
+			action_amend(state, target)
+		elseif op == "squash" then
+			action_squash(state, target)
+		elseif op == "above" then
+			action_place_above(state, target)
+		end
+	end)
 end
 
 tern.block.define("workspace", {
@@ -2539,6 +3017,7 @@ tern.block.define("workspace", {
 			table.insert(main, if view == "graph" then graph_view(state, model)
 				elseif view == "stacks" then stacks_view(state, model)
 				elseif view == "branches" then branches_view(state, model)
+				elseif view == "board" then board_view(state, model)
 				else lanes_view(state, model))
 		end
 		local root = ui.col(main)
@@ -2611,6 +3090,33 @@ tern.block.define("workspace", {
 				if ev.act == "open" then
 					open_diff(state, cx)
 				end
+			end
+			return
+		end
+		if ev.ev == "change" and ev.name == "mark" and type(ev.value) == "string" and ev.value ~= "" then
+			-- a board file's checkbox: the same marks as space
+			state.marked[ev.value] = if ev.checked then true else nil
+			return
+		end
+		if ev.ev == "action" and ev.act == "drop" and type(ev.value) == "string" then
+			if state.sheet == nil then
+				drop_on(state, ev.value)
+			end
+			return
+		end
+		if ev.ev == "action" and ev.act == "do" and type(ev.value) == "string" then
+			-- a board toolbar button: an action key or a board op
+			if state.sheet == nil then
+				board_do(state, ev.value, nil)
+			end
+			return
+		end
+		if ev.ev == "action" and type(ev.act) == "string" and MENU[ev.act] then
+			-- a board card's right-click item; the card's node id carries its
+			-- row key (`main.….L<lane>.<key>`, then any child index)
+			local key = if type(ev.id) == "string" then string.match(ev.id, "%.L%d+%.([^%.]+)") else nil
+			if state.sheet == nil then
+				board_do(state, MENU[ev.act], key)
 			end
 			return
 		end
