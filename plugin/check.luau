@@ -161,14 +161,18 @@ c5bdbeb 2026-10-06 11:32:47 [SNAPSHOT] pre-test]]))
 assert(ops and #ops == 2 and ops[1].kind == "UNDO" and ops[2].title == "pre-test")
 
 -- Terminal cells: wide below U+2E80 (watch, Hangul jamo), emoji, CJK,
--- zero-width combining marks and variation selectors, and invalid UTF-8.
+-- zero-width combining marks, emoji sequences, and invalid UTF-8.
 assert(width.cells("abc") == 3)
 assert(width.cells("watch-⌚") == 8, tostring(width.cells("watch-⌚")))
 assert(width.cells("ᄀ") == 2)
 assert(width.cells("日本") == 4)
 assert(width.cells("👍") == 2)
 assert(width.cells("e\u{301}") == 1)
-assert(width.cells("☺\u{FE0F}") == 1)
+assert(width.cells("☺\u{FE0F}") == 2, "VS16 makes a text symbol an emoji")
+assert(width.cells("⌚\u{FE0E}") == 1, "VS15 makes an emoji text")
+assert(width.cells("👍🏽") == 2, "skin tone joins its emoji")
+assert(width.cells("👨\u{200D}👩\u{200D}👧") == 2, "ZWJ family is one glyph")
+assert(width.cells("🇺🇸🇬🇧") == 4, "flags are regional indicator pairs")
 assert(width.cells("→ x") == 3)
 assert(width.cells("\255\254") == 2)
 

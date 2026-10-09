@@ -597,15 +597,20 @@ local function file_line(state: State, row: Row, assigned: { [string]: string }?
 	return kids
 end
 
--- Rows in [first, last] of `list` around the cursor, at most `room` of them.
+-- Rows in [first, last] of `list` around the cursor. `room` also covers the
+-- "↑ N more" / "↓ N more" lines callers add when rows are hidden, so the
+-- slice plus its markers never takes more than `room` lines.
 local function window(list: { Row }, cursor: string?, room: number): (number, number)
+	if #list <= room then
+		return 1, #list
+	end
 	local at = 1
 	for i, r in list do
 		if r.key == cursor then
 			at = i
 		end
 	end
-	local n = math.max(1, room)
+	local n = math.max(1, room - 2)
 	local first = math.clamp(at - n // 2, 1, math.max(1, #list - n + 1))
 	return first, math.min(#list, first + n - 1)
 end
@@ -961,12 +966,12 @@ local function branches_view(state: State, model: gb.Model): Node
 			end
 		end
 		table.insert(badges, ui.badge(if below then "stacked on " .. gb.label(below) else "on the target", "muted"))
-		table.insert(main, el("bp-badges", badges))
 		local spine: { Node } = {}
 		local used = 0
 		for ci, c in (if b then b.commits else {}) do
 			if used + 1 > room then
-				table.insert(spine, sp("… " .. (#(b :: gb.Branch).commits - ci + 1) .. " more commits", "bp-dim"))
+				-- counted on the badge row, so the summary never takes a line
+				table.insert(badges, ui.badge((#(b :: gb.Branch).commits - ci + 1) .. " not shown", "muted"))
 				break
 			end
 			-- a commit shows as many of its files as still fit; the rest are
@@ -994,6 +999,7 @@ local function branches_view(state: State, model: gb.Model): Node
 		if b == nil or #b.commits == 0 then
 			table.insert(spine, sp("No commits yet. Mark files and press c to commit here.", "bp-dim"))
 		end
+		table.insert(main, el("bp-badges", badges))
 		table.insert(main, el("bp-spine", spine))
 		table.insert(main, hint("p push  P PR  e rename  N stack a branch  u unapply  L land"))
 	end

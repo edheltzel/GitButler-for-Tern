@@ -3,7 +3,8 @@
 -- `tern`, so `luau check.luau` can run it. Wide is Unicode East Asian Width
 -- W/F plus emoji presentation, zero is combining marks, format controls and
 -- variation selectors; ranges are block-level, so a rare unassigned code point
--- inside one counts like its neighbors.
+-- inside one counts like its neighbors. `cells` also reads emoji sequences:
+-- VS16/VS15 presentation, skin-tone modifiers, ZWJ joins and flag pairs.
 
 local width = {}
 
@@ -62,12 +63,56 @@ function width.char(c: number): number
 	return if within(WIDE, c) then 2 else 1
 end
 
--- Cells of one line. Invalid UTF-8 counts one cell per byte.
+local function is_flag_letter(c: number): boolean
+	return c >= 0x1F1E6 and c <= 0x1F1FF
+end
+
+local function is_skin_tone(c: number): boolean
+	return c >= 0x1F3FB and c <= 0x1F3FF
+end
+
+-- Cells of one line, one emoji sequence at a time. Invalid UTF-8 counts one
+-- cell per byte.
 function width.cells(line: string): number
 	local ok, n = pcall(function(): number
 		local w = 0
+		local last = 0 -- cells of the previous visible glyph
+		local joining = false -- a ZWJ just passed: the next code point joins that glyph
+		local flag_open = false -- one regional indicator is waiting for its pair
 		for _, c in utf8.codes(line) do
-			w += width.char(c)
+			if c == 0x200D then
+				joining = true
+			elseif joining then
+				joining = false
+			elseif c == 0xFE0F then
+				-- emoji presentation: a text-default symbol becomes two cells
+				if last == 1 then
+					w += 1
+					last = 2
+				end
+			elseif c == 0xFE0E then
+				if last == 2 then
+					w -= 1
+					last = 1
+				end
+			elseif is_skin_tone(c) and last == 2 then
+				-- part of the emoji before it
+			elseif is_flag_letter(c) then
+				if flag_open then
+					flag_open = false
+				else
+					w += 2
+					last = 2
+					flag_open = true
+				end
+			else
+				flag_open = false
+				local cw = width.char(c)
+				w += cw
+				if cw > 0 then
+					last = cw
+				end
+			end
 		end
 		return w
 	end)
