@@ -2120,6 +2120,8 @@ local function action_pull(state: State)
 		end
 		confirm(state, "Pull " .. base, body, { "pull" }, true, function()
 			-- The result, not the check: upstream or the branches can move while the sheet is open.
+			-- `conflicts` lists branch conflicts only; worktree conflicts come only from the check.
+			local worktree = d.hasWorktreeConflicts
 			mutate(state, "Pulling…", { "pull" }, NETWORK_TIMEOUT_MS, function(result: any): (string, string?)
 				local list = if type(result) == "table" then result.conflicts else nil
 				if type(list) ~= "table" then
@@ -2131,6 +2133,9 @@ local function action_pull(state: State)
 				end
 				if #names > 0 then
 					return "Pulled " .. base .. " with conflicts in " .. table.concat(names, ", ") .. ". z undoes the pull.", "warning"
+				end
+				if worktree then
+					return "Pulled " .. base .. ". Uncommitted changes conflicted with upstream: check the Uncommitted lane. z undoes the pull.", "warning"
 				end
 				return "Pulled " .. base
 			end)
