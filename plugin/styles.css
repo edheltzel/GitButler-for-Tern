@@ -47,11 +47,7 @@
 [data-surface="plugin.gitbutler.workspace"] .bp-ln { position: relative; width: calc(var(--bp-cw) * 2); }
 [data-surface="plugin.gitbutler.workspace"] .bp-lt { position: absolute; left: calc(50% - 1px); top: 0; height: 50%; width: 2px; background-color: var(--lane); }
 [data-surface="plugin.gitbutler.workspace"] .bp-lb { position: absolute; left: calc(50% - 1px); top: 50%; height: 50%; width: 2px; background-color: var(--lane); }
-[data-surface="plugin.gitbutler.workspace"] .bp-join { position: absolute; right: 50%; top: calc(50% - 1px); height: 2px; background-color: var(--lane); }
-[data-surface="plugin.gitbutler.workspace"] .bp-j1 { width: calc(var(--bp-cw) * 2); }
-[data-surface="plugin.gitbutler.workspace"] .bp-j2 { width: calc(var(--bp-cw) * 4); }
-[data-surface="plugin.gitbutler.workspace"] .bp-j3 { width: calc(var(--bp-cw) * 6); }
-[data-surface="plugin.gitbutler.workspace"] .bp-j4 { width: calc(var(--bp-cw) * 8); }
+[data-surface="plugin.gitbutler.workspace"] .bp-join { position: absolute; right: 50%; top: calc(50% - 1px); height: 2px; background-color: var(--lane); } /* width set inline from the lane offset */
 [data-surface="plugin.gitbutler.workspace"] .bp-msg { display: flex; align-items: center; flex-grow: 1; min-width: 0; overflow: hidden; white-space: nowrap; gap: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-more { padding: 0 8px; }
 [data-surface="plugin.gitbutler.workspace"] .bp-detail { border-left: 1px solid var(--l2); padding: 8px calc(var(--bp-cw) * 2); display: flex; flex-direction: column; gap: 8px; min-width: 0; }

@@ -24,7 +24,8 @@ type Row = {
 	lane: number,
 	id: string,
 	label: string,
-	branch: string?, -- the branch it belongs to (branch, commit and cfile rows)
+	branch: string?, -- the branch it belongs to (branch, commit and cfile rows); "" for an anonymous segment
+	bkey: string?, -- key of that branch's row: identifies anonymous segments too
 	path: string?,
 	change: string?,
 	changeId: string?, -- full change id of a commit, or of a committed file's commit
@@ -129,11 +130,12 @@ local function build_rows(state: State)
 			end
 			for _, b in stack.branches do
 				local name = gb.label(b)
-				add(lane, { key = key_of("b", b.id), kind = "branch", lane = lane, id = if b.name ~= "" then b.name else b.id, label = name, branch = b.name })
+				local bkey = key_of("b", b.id)
+				add(lane, { key = bkey, kind = "branch", lane = lane, id = if b.name ~= "" then b.name else b.id, label = name, branch = b.name, bkey = bkey })
 				for _, c in b.commits do
-					add(lane, { key = key_of("c", c.id), kind = "commit", lane = lane, id = c.id, label = c.title, branch = b.name, changeId = c.changeId, message = c.message })
+					add(lane, { key = key_of("c", c.id), kind = "commit", lane = lane, id = c.id, label = c.title, branch = b.name, bkey = bkey, changeId = c.changeId, message = c.message })
 					for _, f in c.files do
-						add(lane, { key = key_of("cf", f.id), kind = "cfile", lane = lane, id = f.id, label = f.path, branch = b.name, path = f.path, change = f.change, changeId = c.changeId })
+						add(lane, { key = key_of("cf", f.id), kind = "cfile", lane = lane, id = f.id, label = f.path, branch = b.name, bkey = bkey, path = f.path, change = f.change, changeId = c.changeId })
 					end
 				end
 			end
@@ -484,7 +486,6 @@ end
 -- They draw with `el` nodes styled by styles.css (scoped to this block).
 -- main never scrolls, so each view shows a window of rows around the cursor.
 local VIEWS = { "lanes", "graph", "stacks", "branches" }
-local VIEW_TITLE: { [string]: string } = { lanes = "lanes", graph = "graph", stacks = "stacks", branches = "branches" }
 
 -- Which rows the keyboard walks in each view.
 local function walkable(state: State, row: Row): boolean
@@ -496,7 +497,7 @@ local function walkable(state: State, row: Row): boolean
 		if row.kind == "branch" then
 			-- a branch with commits is a pill on its first commit row
 			for _, r in state.lanes[row.lane] or {} do
-				if r.kind == "commit" and r.branch == row.branch then
+				if r.kind == "commit" and r.bkey == row.key then
 					return false
 				end
 			end
@@ -537,12 +538,18 @@ end
 local function branch_of_row(model: gb.Model, row: Row): gb.Branch?
 	for _, stack in model.stacks do
 		for _, b in stack.branches do
-			if key_of("b", b.id) == row.key or (row.kind ~= "branch" and row.lane > 1 and b.name ~= "" and b.name == row.branch) then
+			if row.bkey ~= nil and key_of("b", b.id) == row.bkey then
 				return b
 			end
 		end
 	end
 	return nil
+end
+
+-- What a row's branch is called (anonymous segments get gb.label's name).
+local function branch_label(model: gb.Model, row: Row): string
+	local b = branch_of_row(model, row)
+	return if b then gb.label(b) else (row.branch or row.label)
 end
 
 local function commit_of_row(model: gb.Model, row: Row): gb.Commit?
@@ -607,9 +614,10 @@ local function hint(keys: string): Node
 	return sp(keys, "bp-hint")
 end
 
--- Worst-case detail pane height, in list rows: title, badges, 3 kv lines, a
--- 4-line body, "Files", 7 file lines, the hint, and the gaps between them.
-local DETAIL_LINES = 16
+-- Worst-case detail pane height, in list rows (LH+6 px each): 18 text lines
+-- (title, badges, 3 kv lines, a 4-line body, "Files", 7 file lines, the hint)
+-- plus the 7 gaps and padding come to about 17; 18 leaves a line for a wrap.
+local DETAIL_LINES = 18
 
 -- The selected row, as a detail pane (graph view).
 local function detail_pane(state: State, model: gb.Model, assigned: { [string]: string }): Node
@@ -628,7 +636,7 @@ local function detail_pane(state: State, model: gb.Model, assigned: { [string]: 
 		local b = branch_of_row(model, row)
 		local c = if row.kind == "commit" then commit_of_row(model, row) else nil
 		table.insert(kids, sp(if c then c.title else row.label, "bp-dh"))
-		local badges: { Node } = { ui.badge("⎇ " .. (row.branch or row.label), "accent"), status_badge(b) }
+		local badges: { Node } = { ui.badge("⎇ " .. branch_label(model, row), "accent"), status_badge(b) }
 		if c and c.conflicted then
 			table.insert(badges, ui.badge("conflicted", "error"))
 		end
@@ -723,13 +731,15 @@ local function graph_view(state: State, model: gb.Model): Node
 				local head = r.kind == "branch"
 				if r.kind == "commit" then
 					local prev = list[i - 1]
-					head = prev == nil or prev.branch ~= r.branch or prev.lane ~= r.lane
+					head = prev == nil or prev.bkey ~= r.bkey
 				end
 				table.insert(parts, el(if r.kind == "branch" then "bp-dot bp-ring bp-hollow" elseif head then "bp-dot bp-ring" else "bp-dot"))
 			elseif r == nil and lane == 2 then
 				table.insert(parts, el("bp-dot bp-base"))
 			elseif r == nil and start then
-				table.insert(parts, el("bp-join bp-j" .. math.min(lane - 2, 4)))
+				-- reaches from this lane's center to lane 2's, however many stacks
+				local w = ((lane - 2) * 2) .. "ch"
+				table.insert(parts, el("bp-join", nil, { min = { w = w }, max = { w = w } }))
 			end
 			table.insert(cells, el("bp-ln " .. lane_class(lane), parts))
 		end
@@ -759,9 +769,9 @@ local function graph_view(state: State, model: gb.Model): Node
 			end
 		else
 			local prev = list[i - 1]
-			if prev == nil or prev.branch ~= r.branch or prev.lane ~= r.lane then
+			if prev == nil or prev.bkey ~= r.bkey then
 				local b = branch_of_row(model, r)
-				table.insert(ref, ui.badge(r.branch or r.label, if b and b.status == "nothingToPush" then "success" else "accent"))
+				table.insert(ref, ui.badge(branch_label(model, r), if b and b.status == "nothingToPush" then "success" else "accent"))
 			end
 			if r.kind == "commit" then
 				local c = commit_of_row(model, r)
@@ -857,8 +867,8 @@ local function stacks_view(state: State, model: gb.Model): Node
 	local foot: { Node } = {}
 	if row then
 		table.insert(foot, sp(row.label, "bp-t"))
-		if row.branch then
-			table.insert(foot, sp("on " .. row.branch, "bp-dim"))
+		if row.kind == "commit" or row.kind == "cfile" then
+			table.insert(foot, sp("on " .. branch_label(model, row), "bp-dim"))
 		end
 	end
 	local columns = el("bp-cols", cols, { key = "cols" })
@@ -915,10 +925,17 @@ local function branches_view(state: State, model: gb.Model): Node
 		room = math.max(2, room - (hi - lo + 1 + #state.lanes))
 	end
 	if row and row.kind == "file" then
-		table.insert(main, sp("Uncommitted changes", "bp-h1"))
-		table.insert(main, el("bp-badges", { ui.badge(#model.unassigned .. " files", "warning") }))
+		-- the files of the selected file's own lane: uncommitted, or assigned to a stack
+		local all: { Row } = {}
+		for _, r in state.lanes[row.lane] or {} do
+			if r.kind == "file" then
+				table.insert(all, r)
+			end
+		end
+		local stack = if row.lane > 1 then model.stacks[row.lane - 1] else nil
+		table.insert(main, sp(if stack and stack.branches[1] then "Assigned to " .. gb.label(stack.branches[1]) else "Uncommitted changes", "bp-h1"))
+		table.insert(main, el("bp-badges", { ui.badge(#all .. (if #all == 1 then " file" else " files"), "warning") }))
 		local files: { Node } = {}
-		local all = state.lanes[1] or {}
 		local flo, fhi = window(all, state.cursor, room)
 		if flo > 1 then
 			table.insert(files, sp("↑ " .. (flo - 1) .. " more", "bp-dim"))
@@ -952,21 +969,24 @@ local function branches_view(state: State, model: gb.Model): Node
 				table.insert(spine, sp("… " .. (#(b :: gb.Branch).commits - ci + 1) .. " more commits", "bp-dim"))
 				break
 			end
-			-- a commit shows as many of its files as still fit
+			-- a commit shows as many of its files as still fit; the rest are
+			-- counted on its title line, so the count never takes a line itself
 			local fit = math.max(0, math.min(#c.files, room - used - 1))
 			local files: { Node } = {}
 			for fi = 1, fit do
 				local f = c.files[fi]
 				table.insert(files, el("bp-f", { sp(letter(f.change), "bp-ch bp-ch-" .. letter(f.change)), sp(f.path, "bp-path"), sp(f.id, "bp-id") }))
 			end
-			if fit < #c.files then
-				table.insert(files, sp("+" .. (#c.files - fit) .. " files", "bp-dim"))
-			end
-			used += 1 + fit + (if fit < #c.files then 1 else 0)
+			used += 1 + fit
 			table.insert(spine, el("bp-sp " .. lane_class(row.lane), {
 				el("bp-sp-g", { el("bp-sp-line"), el(if ci == 1 then "bp-dot bp-ring" else "bp-dot") }),
 				el("bp-sp-b", {
-					el("bp-sp-t", { sp(c.title, "bp-t"), sp(c.id, "bp-id"), if c.conflicted then ui.badge("conflicted", "error") else sp("", "") }),
+					el("bp-sp-t", {
+						sp(c.title, "bp-t"),
+						sp(c.id, "bp-id"),
+						if fit < #c.files then sp("+" .. (#c.files - fit) .. " files", "bp-dim") else sp("", ""),
+						if c.conflicted then ui.badge("conflicted", "error") else sp("", ""),
+					}),
 					el("bp-files", files),
 				}),
 			}))
@@ -1063,7 +1083,7 @@ local function cycle_view(state: State)
 	state.view = VIEWS[at % #VIEWS + 1]
 	tern.kv.set("view", state.view)
 	settle_cursor(state)
-	state.notice = { tone = "muted", text = "View: " .. VIEW_TITLE[state.view] .. "  (v to switch)" }
+	state.notice = { tone = "muted", text = "View: " .. state.view .. "  (v to switch)" }
 end
 
 -- Actions. Every write is one `but` command, run in the background; one at
