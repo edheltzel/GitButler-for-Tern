@@ -178,6 +178,9 @@ assert(width.cells("🇺🇸🇬🇧") == 4, "flags are regional indicator pairs
 assert(width.cells("A\u{200D}B") == 2, "ZWJ joins only emoji")
 assert(width.cells("👍\u{200D}B") == 3, "ZWJ before text joins nothing")
 assert(width.cells("🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}") == 2, "tag flag is one glyph")
+assert(width.cells("←\u{200D}→") == 2, "arrows outside Extended_Pictographic do not join")
+assert(width.cells("a\u{FE0F}") == 1, "VS16 needs an emoji base")
+assert(width.cells("a\u{1F3FD}") == 3, "skin tone without an emoji base is its own glyph")
 assert(width.cells("→ x") == 3)
 assert(width.cells("\255\254") == 2)
 

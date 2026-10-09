@@ -922,7 +922,7 @@ local function branches_view(state: State, model: gb.Model): Node
 	-- otherwise the sidebar and this pane stack and share the height.
 	local room = fit_lines(list_px(state) - 4 * LH)
 	if state.cx.cols < 110 then
-		room = math.max(2, room - (hi - lo + 1 + #state.lanes))
+		room = math.max(2, room - (hi - lo + 1 + #state.lanes + (if up then 1 else 0) + (if down then 1 else 0)))
 	end
 	if row and row.kind == "file" then
 		-- the files of the selected file's own lane: uncommitted, or assigned to a stack
