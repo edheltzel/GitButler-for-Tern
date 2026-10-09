@@ -28,7 +28,7 @@ The Tern package: the only directory linked into Tern (`tern plugin link plugin`
 - `parse.luau` and `width.luau` stay free of `tern` so `luau check.luau` can run them.
 - Host-only APIs (`tern.block`, `tern.lens`, `tern.pane`) stay out of `window.luau`, and window-only APIs (`tern.command`, `tern.chrome`, `tern.route`, `cx.session`) stay out of the host files.
 - Board drops and right-click items run the same action functions as the keys, through the same confirm and push-state guards; never a second, unguarded path. Right-click item ids are plain labels mapped by `MENU` (Tern shows the id as the label); the row comes from the event's node id.
-- `move` (move to a branch, reorder) stays refused while an uncommitted file shares a path with the moved change: a failed `but` 0.22.3 move drops the commit and those changes with no oplog entry (`DESIGN.md` finding 6).
+- `move` (move to a branch, reorder) stays refused while an uncommitted file shares a path with the moved change, checked when the action starts and again on a fresh `status -f --json` right before `mutate` (`fresh_move`; polling pauses while a sheet is open): a failed `but` 0.22.3 move drops the commit and those changes with no oplog entry (`DESIGN.md` finding 6).
 
 ## Work Guidance
 

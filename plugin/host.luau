@@ -1685,6 +1685,22 @@ local function move_blocked(state: State, row: Row): boolean
 	return true
 end
 
+-- The same check on a fresh status read, just before the move runs: polling
+-- pauses while a sheet is open, so the cached rows can miss an edit made
+-- meanwhile. A failed read refuses the move.
+local function fresh_move(state: State, row: Row, go: () -> ())
+	state.reads += 1
+	read(state, "Checking changes…", { "status", "-f", "--json" }, function(data: any)
+		if apply_status(state, data) == nil then
+			notify(state, "error", "but status printed something other than a workspace. Nothing was modified.")
+			return
+		end
+		if not move_blocked(state, row) then
+			go()
+		end
+	end)
+end
+
 -- The stable ref `but` takes for a commit or committed-file row, or nil and
 -- the reason it can't be targeted.
 local function change_ref(row: Row): (string?, string?)
@@ -1777,7 +1793,9 @@ local function action_move(state: State, target: string?)
 		confirm_rewrite(state, "Move " .. what .. " to " .. branch, {
 			"Rewrites both branches' history" .. (if row.kind == "cfile" then "; the file becomes a new commit on " .. branch .. "." else "."),
 		}, names, { cid :: string }, args, function()
-			mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " to " .. branch)
+			fresh_move(state, row, function()
+				mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " to " .. branch)
+			end)
 		end)
 	end)
 end
@@ -1856,7 +1874,9 @@ local function action_place_above(state: State, target: Row)
 	confirm_rewrite(state, "Move " .. what .. " above " .. target.id, {
 		"Reorders history on " .. table.concat(names, " and ") .. ".",
 	}, names, { row.changeId :: string, tid }, args, function()
-		mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " above " .. target.id)
+		fresh_move(state, row, function()
+			mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " above " .. target.id)
+		end)
 	end)
 end
 
