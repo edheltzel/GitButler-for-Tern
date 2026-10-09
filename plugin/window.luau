@@ -314,7 +314,7 @@ local tui_panes: { [string]: number } = {}
 
 tern.command({
 	id = "tui",
-	title = "GitButler: Open but tui",
+	title = "GitButler: Open TUI",
 	icon = "git-branch",
 	run = function(cx: WindowCx)
 		local root = focused_root(cx)
@@ -349,7 +349,7 @@ tern.command({
 -- `but gui` opens the GitButler desktop app on this workspace and exits.
 tern.command({
 	id = "gui",
-	title = "GitButler: Open in GitButler app",
+	title = "GitButler: Open GUI",
 	icon = "git-branch",
 	run = function(cx: WindowCx)
 		local root = focused_root(cx)
