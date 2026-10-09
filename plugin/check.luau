@@ -1,7 +1,9 @@
 --!strict
--- `luau check.luau`: the lens parsers against output captured from but 0.22.3.
+-- `luau check.luau`: the lens parsers against output captured from but 0.22.3,
+-- and the terminal width the dock is sized by. Prints `parse: ok` (CI greps it).
 
 local parse = require("./parse")
+local width = require("./width")
 
 local function lines(text: string): { string }
 	local out = {}
@@ -157,5 +159,17 @@ Operations History
 a7d7700 2026-10-06 11:32:51 [UNDO] Restored from snapshot: Created commit (3a34003)
 c5bdbeb 2026-10-06 11:32:47 [SNAPSHOT] pre-test]]))
 assert(ops and #ops == 2 and ops[1].kind == "UNDO" and ops[2].title == "pre-test")
+
+-- Terminal cells: wide below U+2E80 (watch, Hangul jamo), emoji, CJK,
+-- zero-width combining marks and variation selectors, and invalid UTF-8.
+assert(width.cells("abc") == 3)
+assert(width.cells("watch-⌚") == 8, tostring(width.cells("watch-⌚")))
+assert(width.cells("ᄀ") == 2)
+assert(width.cells("日本") == 4)
+assert(width.cells("👍") == 2)
+assert(width.cells("e\u{301}") == 1)
+assert(width.cells("☺\u{FE0F}") == 1)
+assert(width.cells("→ x") == 3)
+assert(width.cells("\255\254") == 2)
 
 print("parse: ok")

@@ -4,6 +4,7 @@
 -- command lenses (lenses.luau). Blocks read `but … --json` in the background.
 
 local gb = require("./gb")
+local width = require("./width")
 local ui = tern.ui
 local letter = gb.letter
 local STATUS_TEXT = gb.STATUS_TEXT
@@ -319,27 +320,13 @@ local KEYS_HELP = "↑↓ move  ←→ lanes  ⏎ diff  space mark  c commit  m 
 
 local PICK_FOOT = "↑↓ choose  ⏎ ok  1-9 pick  esc cancel"
 
--- Terminal cells of one line. ponytail: code points from U+2E80 up (CJK,
--- Hangul, fullwidth, emoji) count as 2 cells and everything else as 1; use a
--- real wcwidth table if combining marks or narrower wide ranges matter.
-local function cells(line: string): number
-	local ok, n = pcall(function(): number
-		local w = 0
-		for _, c in utf8.codes(line) do
-			w += if c >= 0x2E80 then 2 else 1
-		end
-		return w
-	end)
-	return if ok then n else #line
-end
-
 -- Lines `text` takes in the dock: its own lines, each wrapped at the pane
 -- width minus the block's side padding (about 12 cells, measured at 78 cols).
 local function wrapped(state: State, text: string): number
-	local width = math.max(1, state.cx.cols - 12)
+	local cols = math.max(1, state.cx.cols - 12)
 	local n = 0
 	for line in string.gmatch(text .. "\n", "(.-)\n") do
-		n += math.max(1, math.ceil(cells(line) / width))
+		n += math.max(1, math.ceil(width.cells(line) / cols))
 	end
 	return n
 end
@@ -1103,9 +1090,9 @@ local function command_line(args: { string }): string
 	return table.concat(parts, " ")
 end
 
--- Runs `but <args> --json`; on success toasts `done`, clears the marks and
--- re-reads the workspace.
-local function mutate(state: State, label: string, args: { string }, timeout_ms: number, done: string)
+-- Runs `but <args> --json`; on success shows `done` (or what `done` makes of
+-- the reply: text and a tone), clears the marks and re-reads the workspace.
+local function mutate(state: State, label: string, args: { string }, timeout_ms: number, done: string | (data: any) -> (string, string?))
 	if state.busy then
 		return
 	end
@@ -1119,8 +1106,15 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 		end
 		state.busy = nil
 		if r.ok then
-			notify(state, "success", done)
-			state.cx:toast("success", done, command_line(args))
+			local text, tone = "", "success"
+			if type(done) == "function" then
+				local t, tn = done(r.data)
+				text, tone = t, tn or "success"
+			else
+				text = done
+			end
+			notify(state, tone, text)
+			state.cx:toast(if tone == "success" then "success" else "info", text, command_line(args))
 			table.clear(state.marked)
 		else
 			local why = r.err or "failed"
@@ -2074,8 +2068,13 @@ local function action_pull(state: State)
 		end
 		local conflicted: { string } = {}
 		for _, b in d.branchStatuses do
-			if type(b) == "table" and b.status == "conflicted" then
-				table.insert(conflicted, if type(b.name) == "string" then b.name else "?")
+			-- every record must name its branch and state, or the warning below could miss one
+			if type(b) ~= "table" or type(b.name) ~= "string" or type(b.status) ~= "string" then
+				notify(state, "error", "but pull --check returned an unexpected branch status; not pulling.")
+				return
+			end
+			if b.status == "conflicted" then
+				table.insert(conflicted, b.name)
 			end
 		end
 		local body = {
@@ -2088,9 +2087,22 @@ local function action_pull(state: State)
 		if d.hasWorktreeConflicts then
 			table.insert(body, "Uncommitted changes conflict with upstream.")
 		end
-		local done = if #conflicted > 0 then "Pulled " .. base .. " with conflicts in " .. table.concat(conflicted, ", ") else "Pulled " .. base
 		confirm(state, "Pull " .. base, body, { "pull" }, true, function()
-			mutate(state, "Pulling…", { "pull" }, NETWORK_TIMEOUT_MS, done)
+			-- The result, not the check: upstream or the branches can move while the sheet is open.
+			mutate(state, "Pulling…", { "pull" }, NETWORK_TIMEOUT_MS, function(result: any): (string, string?)
+				local list = if type(result) == "table" then result.conflicts else nil
+				if type(list) ~= "table" then
+					return "Pulled " .. base .. ". Check the lanes for conflicts; but did not report them.", "warning"
+				end
+				local names: { string } = {}
+				for _, c in list do
+					table.insert(names, if type(c) == "table" and type(c.branch) == "string" then c.branch else "?")
+				end
+				if #names > 0 then
+					return "Pulled " .. base .. " with conflicts in " .. table.concat(names, ", ") .. ". z undoes the pull.", "warning"
+				end
+				return "Pulled " .. base
+			end)
 		end)
 	end)
 end
