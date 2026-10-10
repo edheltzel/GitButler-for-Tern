@@ -158,6 +158,22 @@ In this tutorial, you:
 
 Every other action, including **GitButler: Pull upstream into applied branches…** and **GitButler: Set up this folder**, has a palette command named `GitButler: …`.
 
+### Getting back from a sheet
+
+Most workspace keys open a sheet at the top of the block. Every sheet has a **Cancel** button (**Close** on help), and Escape closes it. `q` also closes every sheet except a text prompt, where it types a q. A pasted "q", Shift+Q or Ctrl+Q never closes a sheet.
+
+| Key | Sheet | Closes with |
+|---|---|---|
+| `?` | Help | `q`, Escape, Close |
+| `O` | Restore from the oplog (picker) | `q`, Escape, Cancel |
+| `c`, `m` | Choose a branch (picker) | `q`, Escape, Cancel |
+| `a` | Apply a branch (picker; a notice when nothing is unapplied) | `q`, Escape, Cancel |
+| `z` | Undo (confirm) | `q`, `n`, Escape, Cancel |
+| `A` | Absorb (confirm) | `q`, `n`, Escape, Cancel |
+| `u`, `p`, `P`, `L` | Unapply / push / pull request / land (confirm) | `q`, `n`, Escape, Cancel |
+| `f` | Pull (confirm; a notice when already up to date) | `q`, `n`, Escape, Cancel |
+| `e`, `n`, `N`, and the commit message after `c` | Text prompt | Escape, Cancel (`q` is text) |
+
 ## How it works
 
 `DESIGN.md` covers the surfaces, the `but --json` fields the plugin relies on, and how each action maps to a `but` command. Contributor and agent rules live in `AGENTS.md`.
