@@ -344,11 +344,14 @@ function width.cells(line: string): number
 					last = 2
 				end
 			elseif is_flag_letter(c) then
+				-- a pair is one two-cell flag; an unpaired letter is a one-cell
+				-- neutral character (UTS #51), so each letter adds one cell
+				w += 1
 				if flag_open then
 					flag_open = false
-				else
-					w += 2
 					last = 2
+				else
+					last = 1
 					pict = false
 					joined = false
 					base = 0
