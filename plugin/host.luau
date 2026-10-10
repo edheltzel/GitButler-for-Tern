@@ -275,7 +275,7 @@ local GAP = 6 -- .bp-lanes gap between lane cards
 
 local KEYS_HELP = "↑↓ move  ←→ lanes  ⏎ diff  space mark  c commit  m move  A absorb  e reword  n/N branch  a/u apply/unapply  z undo  O oplog  p push  P PR  L land  f pull  v view  ? help"
 
-local PICK_FOOT = "↑↓ choose  ⏎ ok  1-9 pick  esc cancel"
+local PICK_FOOT = "↑↓ choose  ⏎ ok  1-9 pick  q/esc cancel"
 
 -- Lines `text` takes in the dock: its own lines, each wrapped at the pane
 -- width minus the block's side padding (about 12 cells, measured at 78 cols).
@@ -2554,7 +2554,7 @@ local function sheet_view(state: State): Node?
 			table.insert(children, ui.text({ ui.span(line, "") }))
 		end
 		table.insert(children, ui.code(sheet.command or "", "sh"))
-		foot = "y confirm  n/esc cancel"
+		foot = "y confirm  n/q/esc cancel"
 	elseif sheet.kind == "pick" then
 		local items: { Item } = {}
 		for i, o in sheet.options or {} do
@@ -2573,7 +2573,7 @@ local function sheet_view(state: State): Node?
 		lp.max = { lines = picker_lines(state) }
 		list.p = lp
 		table.insert(children, list)
-		foot = PICK_FOOT .. "  q close"
+		foot = PICK_FOOT
 	else
 		local rows: { { Cell } } = {}
 		for _, h in HELP do
@@ -2613,7 +2613,7 @@ end
 
 local function sheet_key(state: State, key: Key)
 	local sheet = state.sheet :: Sheet
-	if key.name == "escape" or ((sheet.kind == "pick" or sheet.kind == "help") and key.text == "q") then
+	if key.name == "escape" then
 		finish_sheet(state, nil)
 		return
 	end
@@ -2627,6 +2627,12 @@ local function sheet_key(state: State, key: Key)
 		return
 	end
 	local k = key.text or key.name
+	-- A plain q closes every sheet but a prompt, where q is text. It comes after
+	-- the guard above, so a pasted "q" or a modified q never closes a sheet.
+	if sheet.kind ~= "prompt" and k == "q" then
+		finish_sheet(state, nil)
+		return
+	end
 	if sheet.kind == "prompt" then
 		local text = sheet.text or ""
 		if key.name == "enter" and key.shift then
