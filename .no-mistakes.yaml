@@ -10,3 +10,8 @@ commands:
     rc=0
     out=$(luau-analyze "$@" 2>&1) || rc=$?
     [ "$rc" -le 1 ] && ! printf '%s\n' "$out" | grep -F '): SyntaxError:'
+
+# Fix review findings automatically instead of parking for a decision, so a
+# run only stops for findings that need a person (ask-user) or a spent budget.
+auto_fix:
+  review: 3
