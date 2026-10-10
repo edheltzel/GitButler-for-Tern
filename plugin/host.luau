@@ -336,9 +336,11 @@ local function list_px(state: State): number
 	return state.cx.rows * LH - HEAD - PADS - dock_px(state)
 end
 
--- Picker: the same conversion, minus the sheet footer as it wraps.
+-- Picker: the same conversion, minus the sheet footer as it wraps and what
+-- sits around it, measured: the 8px gap above the footer, then an 8px gap
+-- and the 20px Cancel button below it.
 local function picker_lines(state: State): number
-	return fit_lines(list_px(state) - wrapped(state, PICK_FOOT) * LH)
+	return fit_lines(list_px(state) - wrapped(state, PICK_FOOT) * LH - 36)
 end
 
 
