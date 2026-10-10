@@ -1159,8 +1159,12 @@ end
 local MUTATE_TIMEOUT_MS = 60 * 1000
 local NETWORK_TIMEOUT_MS = 120 * 1000
 
-local function notify(state: State, tone: string, text: string)
+-- The dock line and a toast for every outcome, so an action run from the
+-- palette or with the block out of sight still says what happened. Toasts
+-- have no warning level: warnings show as info. `sub` is the toast's second line.
+local function notify(state: State, tone: string, text: string, sub: string?)
 	state.notice = { tone = tone, text = text }
+	state.cx:toast(if tone == "success" then "success" elseif tone == "error" then "error" else "info", text, sub)
 end
 
 -- POSIX single quotes when an argument is not a plain token. Lua %q is not
@@ -1187,6 +1191,7 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 	table.insert(argv, "--json")
 	state.busy = label
 	state.notice = nil
+	state.cx:toast("info", label, command_line(args))
 	local err = gb.run(state.root, argv, timeout_ms, function(r: gb.Result)
 		if running[state.cx.pane] ~= state then
 			return
@@ -1201,8 +1206,7 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 				else
 					text = done
 				end
-				notify(state, tone, text)
-				state.cx:toast(if tone == "success" then "success" else "info", text, command_line(args))
+				notify(state, tone, text, command_line(args))
 			end
 			table.clear(state.marked)
 			if type(done) == "function" then
@@ -1211,9 +1215,10 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 				show(nil)
 				refresh(state)
 			end
+
 		else
 			local why = r.err or "failed"
-			notify(state, "error", command_line(args) .. ": " .. why)
+			state.notice = { tone = "error", text = command_line(args) .. ": " .. why }
 			state.cx:toast("error", (string.gsub(label, "…$", "")) .. " failed", string.match(why, "^[^\n]*"))
 			refresh(state)
 		end

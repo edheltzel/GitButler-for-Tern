@@ -34,6 +34,7 @@ The Tern package: the only directory linked into Tern (`tern plugin link plugin`
 
 - Every file is `--!strict` Luau. Set node props through a local (`local p = node.p or {}; …; node.p = p`).
 - Destructive actions (undo, oplog restore, unapply, land, history rewrites) open a `confirm` sheet showing the exact `but` command, with `danger = true`. Danger sheets accept only an explicit `y`.
+- Report every outcome with `notify()` (dock line plus a toast) and run every `but` write through `mutate()` (start and result toasts with the command line). Don't set `state.notice` directly for an outcome the user should see; only the `v` view hint does that.
 - Pass `but` arguments as an argv list (no shell). Mutations add `--json` and are checked by exit status.
 - Async callbacks must check liveness (`running[pane] == state` / `pane_alive`) before touching state or sending effects.
 - Saving any file here reloads every plugin in the user's real Tern. A reload that fails mid-edit kills open blocks. To test a deliberately broken build, link a copy (`cp -R plugin /tmp/gbp`) into the isolated Tern instead.
