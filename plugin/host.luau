@@ -2529,7 +2529,7 @@ local HELP: { { string } } = {
 	{ "z / O", "undo the last operation / restore from the oplog" },
 	{ "p / P / L", "push / open a PR for / land the selected branch" },
 	{ "f", "pull: rebase applied branches onto the updated target" },
-	{ "v", "switch view: lanes, graph, stacks, branches" },
+	{ "v", "switch view: lanes, graph, stacks, branches, board" },
 	{ "r", "refresh now (it also polls every 5 s)" },
 }
 
@@ -2573,16 +2573,23 @@ local function sheet_view(state: State): Node?
 		lp.max = { lines = picker_lines(state) }
 		list.p = lp
 		table.insert(children, list)
-		foot = PICK_FOOT
+		foot = PICK_FOOT .. "  q close"
 	else
 		local rows: { { Cell } } = {}
 		for _, h in HELP do
 			table.insert(rows, { ui.span(h[1], "mono accent"), h[2] })
 		end
 		table.insert(children, ui.table({ { id = "key", head = "Key" }, { id = "does", head = "Does", grow = 1 } }, rows))
-		foot = "esc close"
+		foot = "esc/q close"
 	end
 	table.insert(children, ui.text({ ui.span(foot, "dim") }))
+	-- A pick list holds keyboard focus and can keep esc from reaching the block,
+	-- so every sheet also closes by click.
+	table.insert(children, ui.el("button", {
+		class = "bp-btn bp-cancel",
+		text = if sheet.kind == "help" then "Close" else "Cancel",
+		actions = { click = "cancel" },
+	}, {}))
 	local card = ui.card({ ui.span(sheet.title, "strong") }, children)
 	local p: { [string]: any } = card.p or {}
 	p.key = "sheet"
@@ -2606,7 +2613,7 @@ end
 
 local function sheet_key(state: State, key: Key)
 	local sheet = state.sheet :: Sheet
-	if key.name == "escape" then
+	if key.name == "escape" or ((sheet.kind == "pick" or sheet.kind == "help") and key.text == "q") then
 		finish_sheet(state, nil)
 		return
 	end
@@ -3094,6 +3101,12 @@ tern.block.define("workspace", {
 	end,
 
 	event = function(state: State, ev: UiEvent, cx: BlockCx)
+		if ev.ev == "action" and ev.act == "cancel" then
+			if state.sheet then
+				finish_sheet(state, nil)
+			end
+			return
+		end
 		if ev.ev == "action" and ev.act == "view" then
 			cycle_view(state)
 			return

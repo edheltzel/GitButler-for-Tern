@@ -123,6 +123,7 @@
 /* board: one card per ROW (line + 4px, plus the 2px column gap) */
 [data-surface="plugin.gitbutler.workspace"] .bp-tools { display: flex; gap: var(--bp-cw); padding: 2px 0 4px; white-space: nowrap; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-btn { flex-shrink: 0; padding: 1px var(--bp-cw); border-radius: 6px; border: 1px solid var(--l3); background-color: var(--l1); color: var(--ink2); }
+[data-surface="plugin.gitbutler.workspace"] .bp-cancel { align-self: flex-start; }
 [data-surface="plugin.gitbutler.workspace"] .bp-drop { border-style: dashed; border-color: var(--accent); background-color: transparent; color: var(--accent-ink); padding: 0 var(--bp-cw); }
 [data-surface="plugin.gitbutler.workspace"] .bp-cols > .bp-bcol { gap: 2px; flex-basis: calc(var(--bp-cw) * 32); }
 [data-surface="plugin.gitbutler.workspace"] .bp-colh { display: flex; align-items: center; gap: var(--bp-cw); height: var(--bp-row); white-space: nowrap; overflow: hidden; }
