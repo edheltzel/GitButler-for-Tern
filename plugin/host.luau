@@ -336,11 +336,10 @@ local function list_px(state: State): number
 	return state.cx.rows * LH - HEAD - PADS - dock_px(state)
 end
 
--- Picker: the same conversion, minus the sheet footer as it wraps and what
--- sits around it, measured: the 8px gap above the footer, then an 8px gap
--- and the 20px Cancel button below it.
+-- Picker: the same conversion, minus the key row above the list (the 20px
+-- Cancel button sets its height, plus the 8px card gap; it never wraps).
 local function picker_lines(state: State): number
-	return fit_lines(list_px(state) - wrapped(state, PICK_FOOT) * LH - 36)
+	return fit_lines(list_px(state) - 28)
 end
 
 
@@ -2584,14 +2583,18 @@ local function sheet_view(state: State): Node?
 		table.insert(children, ui.table({ { id = "key", head = "Key" }, { id = "does", head = "Does", grow = 1 } }, rows))
 		foot = "esc/q close"
 	end
-	table.insert(children, ui.text({ ui.span(foot, "dim") }))
 	-- A pick list holds keyboard focus and can keep esc from reaching the block,
-	-- so every sheet also closes by click.
-	table.insert(children, ui.el("button", {
-		class = "bp-btn bp-cancel",
-		text = if sheet.kind == "help" then "Close" else "Cancel",
-		actions = { click = "cancel" },
-	}, {}))
+	-- so every sheet also closes by click. The button and the key hints share
+	-- one line directly under the title: main never scrolls, so in a short
+	-- pane the bottom of the sheet clips first and Cancel must not be there.
+	table.insert(children, 1, el("bp-sheet-foot", {
+		ui.el("button", {
+			class = "bp-btn",
+			text = if sheet.kind == "help" then "Close" else "Cancel",
+			actions = { click = "cancel" },
+		}, {}),
+		sp(foot, "bp-hint"),
+	}))
 	local card = ui.card({ ui.span(sheet.title, "strong") }, children)
 	local p: { [string]: any } = card.p or {}
 	p.key = "sheet"
