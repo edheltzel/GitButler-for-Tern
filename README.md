@@ -44,7 +44,7 @@ tern plugin list
 You should see:
 
 ```
-gitbutler 0.1.0 Butler Pane — 2 blocks, 4 lenses, window  ready
+gitbutler 0.1.0 GitButler — 2 blocks, 4 lenses, window  ready
 ```
 
 `ready` means Tern loaded both halves of the plugin. Link the `plugin/` folder, not the repository root.
