@@ -629,14 +629,14 @@ local function detail_pane(state: State, model: gb.Model, assigned: { [string]: 
 		table.insert(kids, sp(row.label, "bp-dh"))
 		table.insert(kids, el("bp-badges", {
 			ui.badge(row.change or "changed", "warning"),
-			ui.badge(if row.kind == "cfile" then "in " .. (row.branch or "commit") else (assigned[row.label] and ("→ " .. assigned[row.label]) or "unassigned"), "muted"),
+			el("bp-label", { ui.badge(if row.kind == "cfile" then "in " .. (row.branch or "commit") else (assigned[row.label] and ("→ " .. assigned[row.label]) or "unassigned"), "muted") }),
 		}))
 		table.insert(kids, hint(if row.kind == "file" then "⏎ diff  space mark  c commit  m move  A absorb" else "⏎ diff  m move"))
 	else
 		local b = branch_of_row(model, row)
 		local c = if row.kind == "commit" then commit_of_row(model, row) else nil
 		table.insert(kids, sp(if c then c.title else row.label, "bp-dh"))
-		local badges: { Node } = { ui.badge("⎇ " .. branch_label(model, row), "accent"), status_badge(b) }
+		local badges: { Node } = { el("bp-label", { ui.badge("⎇ " .. branch_label(model, row), "accent") }), status_badge(b) }
 		if c and c.conflicted then
 			table.insert(badges, ui.badge("conflicted", "error"))
 		end
@@ -960,7 +960,7 @@ local function branches_view(state: State, model: gb.Model): Node
 		if b and b.review then
 			table.insert(rest, ui.badge("PR " .. b.review, "info"))
 		end
-		table.insert(rest, ui.badge(if below then "stacked on " .. gb.label(below) else "on the target", "muted"))
+		table.insert(rest, el("bp-label", { ui.badge(if below then "stacked on " .. gb.label(below) else "on the target", "muted") }))
 		local spine: { Node } = {}
 		-- Budgeted in px, not list rows: a commit block costs its title line, the
 		-- .bp-sp-b padding (2 + 10) and title gap (2) plus 3 for a badge in the

@@ -30,6 +30,9 @@
 [data-surface="plugin.gitbutler.workspace"] .bp-files { display: flex; flex-direction: column; }
 /* Every line the views budget is one line: text clips instead of wrapping. */
 [data-surface="plugin.gitbutler.workspace"] .bp-badges { display: flex; gap: var(--bp-cw); flex-wrap: nowrap; overflow: hidden; }
+[data-surface="plugin.gitbutler.workspace"] .bp-badges > * { flex-shrink: 0; }
+[data-surface="plugin.gitbutler.workspace"] .bp-badges > .bp-label { flex-shrink: 1; min-width: 0; overflow: hidden; }
+[data-surface="plugin.gitbutler.workspace"] .bp-label > .sf-badge { display: block; overflow: hidden; text-overflow: ellipsis; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sel { background-color: var(--l2); }
 [data-surface="plugin.gitbutler.workspace"] .sf-act { cursor: pointer; }
 [data-surface="plugin.gitbutler.workspace"] .bp-dot { position: absolute; left: calc(50% - 4px); top: calc(50% - 4px); width: 8px; height: 8px; border-radius: 50%; background-color: var(--lane); }
@@ -60,7 +63,9 @@
 /* stacks */
 [data-surface="plugin.gitbutler.workspace"] .bp-tray { display: flex; align-items: center; gap: var(--bp-cw); padding: 6px 8px; border: 1px dashed var(--l3); border-radius: 8px; white-space: nowrap; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-tray-h { color: var(--warn); font-weight: 600; margin-right: var(--bp-cw); }
-[data-surface="plugin.gitbutler.workspace"] .bp-chip { display: flex; align-items: center; padding: 1px var(--bp-cw); border-radius: 6px; background-color: var(--chip-bg); }
+[data-surface="plugin.gitbutler.workspace"] .bp-chip { display: flex; align-items: center; padding: 1px var(--bp-cw); border-radius: 6px; background-color: var(--chip-bg); box-sizing: border-box; max-width: calc(var(--bp-cw) * 23); min-width: 0; overflow: hidden; }
+[data-surface="plugin.gitbutler.workspace"] .bp-chip > * { flex-shrink: 0; }
+[data-surface="plugin.gitbutler.workspace"] .bp-chip > .bp-path { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 [data-surface="plugin.gitbutler.workspace"] .bp-chip.bp-sel { background-color: var(--l3); }
 [data-surface="plugin.gitbutler.workspace"] .bp-bh { display: flex; align-items: center; justify-content: space-between; gap: var(--bp-cw); margin-top: 4px; padding: 2px 4px; border-radius: 4px; }
 [data-surface="plugin.gitbutler.workspace"] .bp-bh-n { font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; }

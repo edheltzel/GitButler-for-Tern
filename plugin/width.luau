@@ -303,14 +303,15 @@ function width.cells(line: string): number
 		local base = 0 -- the previous visible code point
 		local pict = false -- the previous visible glyph is an emoji
 		local joining = false -- an emoji then a ZWJ: a following emoji joins it
-		local joined = false -- the previous visible code point joined across a ZWJ
+		local joined: number? = nil
 		local flag_open = false -- one regional indicator is waiting for its pair
 		for _, c in utf8.codes(line) do
 			if joining then
 				joining = false
 				if is_pictographic(c) then
-					-- joined into the emoji before the ZWJ: no extra cells
-					joined = true
+					joined = last
+					w += 2 - last
+					last = 2
 					base = c
 					continue
 				end
@@ -328,7 +329,7 @@ function width.cells(line: string): number
 					-- VS15 breaks the ZWJ sequence (UTS #51): the joined
 					-- component renders on its own, as text when it has a text form
 					local cw = if within(VSBASE, base) then 1 else width.char(base)
-					w += cw
+					w += cw + joined - last
 					last = cw
 				elseif last == 2 and within(VSBASE, base) then
 					w -= 1
@@ -336,7 +337,12 @@ function width.cells(line: string): number
 				end
 				-- a text-presented glyph never joins across a following ZWJ
 				pict = false
-				joined = false
+				joined = nil
+			elseif c == 0x20E3 and (base == 0x23 or base == 0x2A or (base >= 0x30 and base <= 0x39)) then
+				if last == 1 then
+					w += 1
+					last = 2
+				end
 			elseif is_skin_tone(c) and within(MODBASE, base) then
 				-- part of the glyph before it, which it makes a two-cell emoji
 				if last == 1 then
@@ -353,7 +359,7 @@ function width.cells(line: string): number
 				else
 					last = 1
 					pict = false
-					joined = false
+					joined = nil
 					base = 0
 					flag_open = true
 				end
@@ -363,7 +369,7 @@ function width.cells(line: string): number
 				w += cw
 				if cw > 0 then
 					last = cw
-					joined = false
+					joined = nil
 					base = c
 					pict = is_pictographic(c)
 				end
