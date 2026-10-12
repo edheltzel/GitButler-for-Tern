@@ -146,8 +146,7 @@ local WIDE: { { number } } = {
 	{ 0x20000, 0x2FFFD }, { 0x30000, 0x3FFFD },
 }
 
--- PICT: Extended_Pictographic, what joins across a ZWJ (UAX #29 GB11) or takes
--- a variation selector.
+-- PICT: Extended_Pictographic, what joins across a ZWJ (UAX #29 GB11).
 local PICT: { { number } } = {
 	{ 0x00A9, 0x00A9 }, { 0x00AE, 0x00AE }, { 0x203C, 0x203C }, { 0x2049, 0x2049 },
 	{ 0x2122, 0x2122 }, { 0x2139, 0x2139 }, { 0x2194, 0x2199 }, { 0x21A9, 0x21AA },

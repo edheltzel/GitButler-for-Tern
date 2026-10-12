@@ -39,7 +39,7 @@ The Tern package: the only directory linked into Tern (`tern plugin link plugin`
 ## Verification
 
 - `cd plugin && luau check.luau` (must print `parse: ok`)
-- `cd plugin && luau-analyze host.luau lenses.luau gb.luau window.luau parse.luau width.luau 2>&1 | grep -i syntax` (empty output means clean; type errors are expected noise)
+- Syntax check: follow root `AGENTS.md`, Commands (`.no-mistakes.yaml` owns the script).
 - Smoke each change in the isolated Tern (root `AGENTS.md`, Testing)
 
 ## Child DOX Index
