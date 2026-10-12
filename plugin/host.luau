@@ -186,6 +186,9 @@ local function refresh(state: State, after: ((any) -> ())?)
 		end
 		state.loading = false
 		if token ~= state.reads or state.sheet ~= nil or state.busy ~= nil then
+			if after then
+				after(nil)
+			end
 			state.cx:render()
 			return
 		end
