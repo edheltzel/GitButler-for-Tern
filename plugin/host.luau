@@ -142,18 +142,15 @@ local function build_rows(state: State)
 		end
 	end
 	state.lanes, state.rows = lanes, rows
-	local found, anchored = false, false
+	local found = false
 	for _, r in rows do
 		found = found or r.key == state.cursor
-		anchored = anchored or r.key == state.viewport
 	end
 	if not found then
 		local row = rows[1]
 		state.cursor = if row then row.key else nil
-		state.viewport = state.cursor
-	elseif not anchored then
-		state.viewport = state.cursor
 	end
+	state.viewport = state.cursor
 end
 
 local function index_of(state: State, key: string?): number
@@ -2507,6 +2504,10 @@ tern.block.define("workspace", {
 
 	title = function(state: State): string?
 		return "GitButler · " .. basename(state.root)
+	end,
+
+	resize = function(state: State)
+		state.viewport = state.cursor
 	end,
 
 	view = function(state: State, _cx: BlockCx): BlockView

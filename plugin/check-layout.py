@@ -120,6 +120,102 @@ local function check(ok, message)
     cases += 1
     if not ok then table.insert(failures, message) end
 end
+local function resize(state, cx, cols, rows)
+    cx.cols, cx.rows = cols, rows
+    if workspace.resize then workspace.resize(state, cols, rows, cx) end
+    return workspace.view(state, cx)
+end
+local function last_target(main)
+    local key
+    visit(main, function(node)
+        local p = node.p or {}
+        if p.actions and p.actions.click then key = p.key end
+    end)
+    return key
+end
+do
+    local state, cx = init("graph", 78, 30, 12)
+    check(positions(workspace.view(state, cx).main)["c-c4"] ~= nil,
+        "the reported fourth commit must be visible before the click")
+    workspace.event(state, { ev = "action", act = "pick", value = "c-c4" }, cx)
+    check(positions(workspace.view(state, cx).main)["c-c4"] ~= nil,
+        "pointer selection hid the reported fourth commit")
+    check(positions(resize(state, cx, 78, 24).main)["c-c4"] ~= nil,
+        "shortening graph view hid the selected fourth commit")
+end
+for _, view in { "lanes", "graph", "stacks", "branches" } do
+    for _, cols in { 78, 160 } do
+        for _, size in { { 160, 24 }, { 78, 30 }, { 78, 24 }, { 160, 60 } } do
+            local state, cx = init(view, cols, 30, 12)
+            local target = last_target(workspace.view(state, cx).main)
+            workspace.event(state, { ev = "action", act = "pick", value = target }, cx)
+            local after = resize(state, cx, size[1], size[2])
+            check(state.cursor == target and positions(after.main)[target] ~= nil,
+                view .. ": resizing to " .. size[1] .. "x" .. size[2] .. " hid the selection")
+        end
+    end
+    local state, cx = init(view, 160, 30, 12)
+    local target = last_target(workspace.view(state, cx).main)
+    workspace.event(state, { ev = "action", act = "pick", value = target }, cx)
+    local changed = status(12)
+    for i = 1, 20 do
+        table.insert(changed.uncommittedChanges, 1, {
+            cliId = "newf" .. i, filePath = "new-file-" .. i, changeType = "added",
+        })
+    end
+    for i, commit in status(5).stacks[1].branches[1].commits do
+        commit.cliId, commit.changeId = "newc" .. i, "newchange" .. i
+        commit.commitId = "newsha" .. i
+        for fi, file in commit.changes do file.cliId = "newcf" .. i .. ":" .. fi end
+        table.insert(changed.stacks[1].branches[1].commits, 1, commit)
+    end
+    fixture = changed
+    workspace.key(state, { name = "r" }, cx)
+    check(state.cursor == target and positions(workspace.view(state, cx).main)[target] ~= nil,
+        view .. ": inserting rows on refresh hid the surviving selection")
+end
+for _, view in { "branches", "stacks" } do
+    for _, transition in { "resize", "refresh" } do
+        local state, cx = init(view, 160, 30, 0)
+        fixture = status(0)
+        for i = 2, 12 do
+            table.insert(fixture.uncommittedChanges, { cliId = "u" .. i, filePath = "work-" .. i, changeType = "modified" })
+        end
+        workspace.key(state, { name = "r" }, cx)
+        local target = if view == "branches" then "f-u11" else "f-u4"
+        check(positions(workspace.view(state, cx).main)[target] ~= nil, view .. ": file selection fixture is visible")
+        workspace.event(state, { ev = "action", act = "pick", value = target }, cx)
+        local after
+        if transition == "resize" then
+            after = resize(state, cx, 78, 24)
+        else
+            local files = table.clone(fixture.uncommittedChanges)
+            fixture = status(0)
+            fixture.uncommittedChanges = files
+            for i = 1, 20 do
+                table.insert(files, 1, { cliId = "newu" .. i, filePath = "new-work-" .. i, changeType = "added" })
+            end
+            workspace.key(state, { name = "r" }, cx)
+            after = workspace.view(state, cx)
+        end
+        local in_files = view ~= "branches"
+        visit(after.main, function(node)
+            if has_class(node, "bp-f") and has_class(node, "bp-sel") then in_files = true end
+        end)
+        check(state.cursor == target and positions(after.main)[target] ~= nil and in_files,
+            view .. ": " .. transition .. " hid the selection in the tray, sidebar or file pane")
+    end
+end
+do
+    local state, cx = init("lanes", 78, 30, 1)
+    workspace.event(state, { ev = "action", act = "pick", value = "c-c1" }, cx)
+    local before = positions(workspace.view(state, cx).main)
+    workspace.key(state, { name = "r" }, cx)
+    local after = positions(workspace.view(state, cx).main)
+    for key, path in before do
+        check(after[key] == path, "an unchanged status refresh moved " .. key)
+    end
+end
 for _, view in { "lanes", "graph", "stacks", "branches" } do
     for _, cols in { 78, 160 } do
         local state, cx = init(view, cols, 30, if view == "lanes" then 1 else 12)
