@@ -906,6 +906,9 @@ local function branches_view(state: State, model: gb.Model): Node
 	end
 	local lo, hi, up, down = window(list, state.cursor, side_room)
 	local last = 0
+	-- Sidebar height in px (styles.css .bp-side): 6px padding top and bottom,
+	-- a 2px gap per item, a .bp-sh header's 8px margin, a .bp-sb row's 6px padding.
+	local side_px = 12 + (hi - lo + 1) * (LH + 8) + ((if up then 1 else 0) + (if down then 1 else 0)) * (LH + 2)
 	if up then
 		table.insert(side, sp("↑ " .. (lo - 1) .. " more", "bp-dim"))
 	end
@@ -913,6 +916,7 @@ local function branches_view(state: State, model: gb.Model): Node
 		local r = list[i]
 		if r.lane ~= last then
 			last = r.lane
+			side_px += LH + 10
 			table.insert(side, sp(if r.lane == 1 then "Uncommitted " .. #model.unassigned else "Stack " .. (r.lane - 1), if r.lane == 1 then "bp-sh bp-warn" else "bp-sh"))
 		end
 		if r.kind == "file" then
@@ -935,10 +939,13 @@ local function branches_view(state: State, model: gb.Model): Node
 	local main: { Node } = {}
 	-- Side by side only when the reported width surely fits both panes;
 	-- otherwise the sidebar and this pane stack and share the height.
-	local room = fit_lines(list_px(state) - 4 * LH)
+	-- .bp-cmain: 8px padding top and bottom, the 1.4em title, the badge row,
+	-- the hint and the three 10px gaps between them.
+	local main_px = list_px(state) - (16 + (LH + 9) + (LH + 1) + LH + 30)
 	if state.cx.cols < 110 then
-		room = math.max(2, room - (hi - lo + 1 + #state.lanes + (if up then 1 else 0) + (if down then 1 else 0)))
+		main_px -= side_px
 	end
+	local room = fit_lines(main_px)
 	if row and row.kind == "file" then
 		-- the files of the selected file's own lane: uncommitted, or assigned to a stack
 		local all: { Row } = {}
@@ -981,7 +988,7 @@ local function branches_view(state: State, model: gb.Model): Node
 		-- .bp-sp-b padding (2 + 10) and title gap (2) plus 3 for a badge in the
 		-- title; each file line costs one LH (styles.css .bp-sp-b / .bp-files).
 		local SPINE_COMMIT, SPINE_FILE = LH + 17, LH
-		local budget, used = room * ROW, 0
+		local budget, used = main_px, 0
 		for ci, c in (if b then b.commits else {}) do
 			if used + SPINE_COMMIT > budget then
 				hidden = #(b :: gb.Branch).commits - ci + 1
