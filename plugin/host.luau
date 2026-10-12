@@ -2082,8 +2082,13 @@ end
 -- `but pull` rebases every applied branch onto the updated target, so it
 -- confirms as a rewrite. `--check` first says whether there is anything to
 -- take; a reply missing any field this relies on stops the pull instead of
--- confirming blind.
-local function action_pull(state: State)
+-- confirming blind. Pressing y runs `--check` again: if anything changed
+-- while the sheet was open, the sheet reopens with the new facts instead of
+-- pulling. `but pull --json` reports conflicts from branch states only, so
+-- uncommitted-change conflicts come from that last check.
+type PullPlan = { base: string, count: number, conflicted: { string }, worktree: boolean, upToDate: boolean }
+
+local function pull_check(state: State, use: (PullPlan) -> ())
 	read(state, "Checking upstream…", { "pull", "--check", "--json" }, function(data: any)
 		local d = if type(data) == "table" then data else {}
 		local up = d.upstreamCommits
@@ -2093,13 +2098,9 @@ local function action_pull(state: State)
 			notify(state, "error", "but pull --check returned an unexpected reply; not pulling.")
 			return
 		end
-		if d.upToDate then
-			notify(state, "info", "Already up to date with " .. base .. ".")
-			return
-		end
 		local conflicted: { string } = {}
 		for _, b in d.branchStatuses do
-			-- every record must name its branch and state, or the warning below could miss one
+			-- every record must name its branch and state, or the warning could miss one
 			if type(b) ~= "table" or type(b.name) ~= "string" or type(b.status) ~= "string" then
 				notify(state, "error", "but pull --check returned an unexpected branch status; not pulling.")
 				return
@@ -2108,46 +2109,77 @@ local function action_pull(state: State)
 				table.insert(conflicted, b.name)
 			end
 		end
-		local body = {
-			n .. " new commit(s) on " .. base .. ".",
-			"Fetches, then rebases every applied branch onto it.",
-		}
-		if #conflicted > 0 then
-			table.insert(body, "Will conflict: " .. table.concat(conflicted, ", ") .. ". Their commits become conflicted; z undoes the pull.")
-		end
-		if d.hasWorktreeConflicts then
-			table.insert(body, "Uncommitted changes conflict with upstream.")
-		end
-		confirm(state, "Pull " .. base, body, { "pull" }, true, function()
-			-- The result, not the check: upstream or the branches can move while the sheet is open.
-			-- `conflicts` lists branch conflicts only. Conflicts in uncommitted files show
-			-- in the reply only as `status`, so a clean pull needs `status == "completed"`.
-			local worktree = d.hasWorktreeConflicts
+		table.sort(conflicted)
+		use({ base = base, count = n, conflicted = conflicted, worktree = d.hasWorktreeConflicts, upToDate = d.upToDate })
+	end)
+end
+
+local function same_plan(a: PullPlan, b: PullPlan): boolean
+	return a.base == b.base and a.count == b.count and a.worktree == b.worktree and a.upToDate == b.upToDate
+		and table.concat(a.conflicted, "\n") == table.concat(b.conflicted, "\n")
+end
+
+local function pull_result(plan: PullPlan, result: any): (string, string?)
+	local base = plan.base
+	local status = if type(result) == "table" then result.status else nil
+	local list = if type(result) == "table" then result.conflicts else nil
+	if status == "up_to_date" then
+		return "Already up to date with " .. base .. ".", "info"
+	end
+	local names: { string } = {}
+	for _, c in (if type(list) == "table" then list else {}) do
+		table.insert(names, if type(c) == "table" and type(c.branch) == "string" then c.branch else "?")
+	end
+	local parts: { string } = {}
+	if #names > 0 then
+		table.insert(parts, "conflicts in " .. table.concat(names, ", "))
+	elseif status == "completed_with_conflicts" then
+		table.insert(parts, "conflicts but did not name (check the lanes)")
+	elseif status ~= "completed" then
+		table.insert(parts, "an unconfirmed result (but reported status " .. tostring(status) .. "; check the lanes)")
+	end
+	if plan.worktree then
+		table.insert(parts, "uncommitted changes that conflicted with upstream (check the Uncommitted lane)")
+	end
+	if #parts > 0 then
+		return "Pulled " .. base .. " with " .. table.concat(parts, " and ") .. ". z undoes the pull.", "warning"
+	end
+	return "Pulled " .. base
+end
+
+local function confirm_pull(state: State, plan: PullPlan, changed: boolean)
+	if plan.upToDate then
+		notify(state, "info", "Already up to date with " .. plan.base .. ".")
+		return
+	end
+	local body: { string } = {}
+	if changed then
+		table.insert(body, "Upstream or your workspace changed while this was open; this is the new picture.")
+	end
+	table.insert(body, plan.count .. " new commit(s) on " .. plan.base .. ".")
+	table.insert(body, "Fetches, then rebases every applied branch onto it.")
+	if #plan.conflicted > 0 then
+		table.insert(body, "Will conflict: " .. table.concat(plan.conflicted, ", ") .. ". Their commits become conflicted; z undoes the pull.")
+	end
+	if plan.worktree then
+		table.insert(body, "Uncommitted changes conflict with upstream.")
+	end
+	confirm(state, "Pull " .. plan.base, body, { "pull" }, true, function()
+		pull_check(state, function(now: PullPlan)
+			if not same_plan(plan, now) then
+				confirm_pull(state, now, true)
+				return
+			end
 			mutate(state, "Pulling…", { "pull" }, NETWORK_TIMEOUT_MS, function(result: any): (string, string?)
-				local list = if type(result) == "table" then result.conflicts else nil
-				local status = if type(result) == "table" then result.status else nil
-				if type(list) ~= "table" then
-					return "Pulled " .. base .. ". Check the lanes for conflicts; but did not report them.", "warning"
-				end
-				local names: { string } = {}
-				for _, c in list do
-					table.insert(names, if type(c) == "table" and type(c.branch) == "string" then c.branch else "?")
-				end
-				local parts: { string } = {}
-				if #names > 0 then
-					table.insert(parts, "conflicts in " .. table.concat(names, ", "))
-				end
-				if worktree or (status == "completed_with_conflicts" and #names == 0) then
-					table.insert(parts, "uncommitted changes conflicted with upstream (check the Uncommitted lane)")
-				elseif status ~= "completed" and #names == 0 then
-					table.insert(parts, "an unconfirmed result (but reported status " .. tostring(status) .. "; check the lanes)")
-				end
-				if #parts > 0 then
-					return "Pulled " .. base .. " with " .. table.concat(parts, " and ") .. ". z undoes the pull.", "warning"
-				end
-				return "Pulled " .. base
+				return pull_result(now, result)
 			end)
 		end)
+	end)
+end
+
+local function action_pull(state: State)
+	pull_check(state, function(plan: PullPlan)
+		confirm_pull(state, plan, false)
 	end)
 end
 
