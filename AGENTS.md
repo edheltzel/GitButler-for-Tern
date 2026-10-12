@@ -20,6 +20,7 @@ This repo is a GitButler workspace (`gitbutler/workspace`, target `origin/main`,
 - Never add an agent as a commit co-author.
 - **Shipping to `main` (user rule):** every PR goes through the no-mistakes gate, and no-mistakes must follow GitButler (no checkout, no worktree workaround). Only for that ship: `but config push-remote no-mistakes`, `but push <top branch>`, keep the top branch's run and abort the lower ones (`no-mistakes axi abort --run <id>`), then `but config push-remote origin`. One PR per ship.
 - **Gate limits on a GitButler workspace:** a push can't carry `--intent`, so the gate infers it from transcripts; and `no-mistakes axi respond` resolves only the current branch, so it can't answer a gate while HEAD is `gitbutler/workspace`. Drive parked gates from the `no-mistakes` TUI.
+- **Gate runs unattended:** `.no-mistakes.yaml` sets `auto_fix.review: 3`, so review findings marked `auto-fix` are fixed and committed by the gate (the global default `0` parks them). A run still parks for `ask-user` findings, a spent fix budget, a failing test, or a protected-path refusal; only then open the TUI (`no-mistakes attach --run <id>`).
 - **Gate refs need new names to re-push:** `but push` to the gate fails with `Failed to derive forge information` when it must force-push. Rename the branches (`but reword <branch> -m <new-name>`) so they push as new refs.
 
 ## Commands
@@ -28,9 +29,9 @@ This repo is a GitButler workspace (`gitbutler/workspace`, target `origin/main`,
 - Status and load errors: `tern plugin list` (host half); window-half errors appear in `~/Library/Logs/Tern/tern.log`
 - Force reload: `tern plugin reload`
 - Regenerate types after a Tern upgrade: `tern plugin types plugin` (writes `plugin/tern.d.luau`; don't hand-edit it)
-- Parser check: `cd plugin && luau check.luau` (must print `parse: ok`)
-- Syntax check: `cd plugin && luau-analyze host.luau lenses.luau gb.luau window.luau parse.luau 2>&1 | grep -i syntax` (empty output means clean; the type errors it reports are expected noise, because luau-lsp/luau-analyze can't load `tern.d.luau`)
-- CI: `.no-mistakes.yaml` owns the checks (`commands.test` = parser check, `commands.lint` = syntax check over every `.luau` except `tern.d.luau`, failing on any `SyntaxError` or a missing/crashed `luau-analyze`); `.github/workflows/ci.yml` mirrors them on Luau 0.741 (regenerate with `no-mistakes ci-workflow -f`, then restore the Install Luau step). The gate reads `commands.*` only from `main`.
+- Parser and width check: `cd plugin && luau check.luau` (must print `parse: ok`)
+- Syntax check: run the `commands.lint` script in [.no-mistakes.yaml](.no-mistakes.yaml) from the repo root; it allows expected type noise but rejects syntax errors and analyzer failures.
+- CI: `.no-mistakes.yaml` owns the checks (`commands.test` = parser and width check, `commands.lint` = syntax check over every `.luau` except `tern.d.luau`, each passed as its own argument, failing on a `): SyntaxError:` diagnostic or a missing/crashed `luau-analyze`); `.github/workflows/ci.yml` mirrors them on Luau 0.741 (regenerate with `no-mistakes ci-workflow -f`, then restore the Install Luau step, the lint script and the concurrency block). A newer push cancels a PR's run; each `main` run has its own concurrency group (`github.run_id`), so none is cancelled or replaced while pending. The gate reads `commands.*` only from `main`, and GitHub Actions runs `run:` steps with `bash -e`, so test a changed script under both `sh -c` and `bash -e -c`.
 - Logs: `~/Library/Logs/Tern/tern-daemon.log` (host half, `plugin handler failed`), `~/Library/Logs/Tern/tern.log` (window half)
 
 ## Testing

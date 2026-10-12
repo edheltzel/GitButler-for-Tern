@@ -1,7 +1,9 @@
 --!strict
--- `luau check.luau`: the lens parsers against output captured from but 0.22.3.
+-- `luau check.luau`: the lens parsers against output captured from but 0.22.3,
+-- and the terminal width the dock is sized by. Prints `parse: ok` (CI greps it).
 
 local parse = require("./parse")
+local width = require("./width")
 
 local function lines(text: string): { string }
 	local out = {}
@@ -157,5 +159,76 @@ Operations History
 a7d7700 2026-10-06 11:32:51 [UNDO] Restored from snapshot: Created commit (3a34003)
 c5bdbeb 2026-10-06 11:32:47 [SNAPSHOT] pre-test]]))
 assert(ops and #ops == 2 and ops[1].kind == "UNDO" and ops[2].title == "pre-test")
+
+-- Terminal cells: wide below U+2E80 (watch, Hangul jamo), emoji, CJK,
+-- zero-width combining marks, emoji sequences, and invalid UTF-8.
+assert(width.cells("abc") == 3)
+assert(width.cells("watch-⌚") == 8, tostring(width.cells("watch-⌚")))
+assert(width.cells("ᄀ") == 2)
+assert(width.cells("日本") == 4)
+assert(width.cells("👍") == 2)
+assert(width.cells("e\u{301}") == 1)
+assert(width.cells("☺\u{FE0F}") == 2, "VS16 makes a text symbol an emoji")
+assert(width.cells("⌚\u{FE0E}") == 1, "VS15 makes an emoji text")
+assert(width.cells("👍🏽") == 2, "skin tone joins its emoji")
+assert(width.cells("☝🏽") == 2, "skin tone widens a text-width base")
+assert(width.cells("⛹🏽") == 2, "skin tone widens a text-width base")
+assert(width.cells("👨\u{200D}👩\u{200D}👧") == 2, "ZWJ family is one glyph")
+assert(width.cells("🇺🇸🇬🇧") == 4, "flags are regional indicator pairs")
+assert(width.cells("🇺") == 1, "an unpaired regional indicator is one cell")
+assert(width.cells("🇺🇸🇬") == 3, "a flag then an unpaired letter")
+assert(width.cells("A\u{200D}B") == 2, "ZWJ joins only emoji")
+assert(width.cells("👍\u{200D}B") == 3, "ZWJ before text joins nothing")
+assert(width.cells("🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}") == 2, "tag flag is one glyph")
+assert(width.cells("←\u{200D}→") == 2, "arrows outside Extended_Pictographic do not join")
+assert(width.cells("a\u{FE0F}") == 1, "VS16 needs an emoji base")
+assert(width.cells("a\u{1F3FD}") == 3, "skin tone without an emoji base is its own glyph")
+assert(width.cells("1\u{FE0F}\u{20E3}") == 2, "keycap is one emoji")
+for _, base in { "#", "*", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9" } do
+	assert(width.cells(base .. "\u{20E3}") == 2, "bare keycap is one emoji")
+	assert(width.cells(base .. "\u{FE0F}\u{20E3}") == 2, "qualified keycap is one emoji")
+	assert(width.cells("x" .. base .. "\u{20E3}y") == 4, "keycap preserves surrounding text")
+end
+assert(width.cells("a\u{20E3}") == 1, "keycap mark needs a keycap base")
+assert(width.cells("\u{20E3}") == 0, "keycap mark alone is zero width")
+assert(width.cells("🏳\u{200D}🌈") == 2, "ZWJ widens a text-width first component")
+assert(width.cells("🏳\u{FE0F}\u{200D}🌈") == 2, "qualified rainbow flag stays two cells")
+assert(width.cells("🏳\u{200D}⚧") == 2, "joined text-width components form a two-cell emoji")
+assert(width.cells("🏳\u{200D}⚧\u{FE0F}") == 2, "VS16 keeps the joined emoji width")
+assert(width.cells("🏳\u{200D}⚧\u{FE0E}") == 2, "VS15 restores separate text-width components")
+assert(width.cells("🏳\u{200D}🌈\u{FE0E}") == 3, "VS15 restores the first component before splitting")
+assert(width.cells("x🏳\u{200D}🌈y") == 4, "joined emoji preserves surrounding text")
+assert(width.cells("🌍\u{1F3FD}") == 4, "skin tone needs an Emoji_Modifier_Base")
+assert(width.cells("ש\u{05C1}") == 1, "Hebrew point is zero width")
+assert(width.cells("👩\u{200D}❤\u{FE0E}\u{200D}👩") == 5, "VS15 breaks a ZWJ sequence")
+assert(width.cells("👩\u{200D}❤\u{FE0F}\u{200D}👩") == 2, "couple with heart is one glyph")
+assert(width.cells("\u{1100}\u{1161}") == 2, "decomposed Hangul syllable is one block")
+assert(width.cells("❤\u{FE0E}\u{200D}🔥") == 3, "VS15 before a ZWJ ends the sequence")
+assert(width.cells("⌚\u{FE0E}\u{200D}🔥") == 3, "VS15 before a ZWJ ends the sequence")
+assert(width.cells("🔥\u{FE0E}") == 2, "VS15 without a variation sequence changes nothing")
+assert(width.cells("→ x") == 3)
+assert(width.cells("\255\254") == 2)
+
+-- width.slice: rows around the cursor plus the markers it allows never
+-- exceed the room, and the cursor's row always shows.
+for _, room in { 1, 2, 3, 4, 7 } do
+	for at = 1, 10 do
+		local first, last, up, down = width.slice(10, at, room)
+		local lines = (last - first + 1) + (if up then 1 else 0) + (if down then 1 else 0)
+		assert(at >= first and at <= last, `cursor {at} hidden at room {room}`)
+		assert(lines <= math.max(room, 1), `room {room}, cursor {at}: {lines} lines`)
+		assert(not up or first > 1, "an up marker means rows are hidden above")
+		assert(not down or last < 10, "a down marker means rows are hidden below")
+		assert(lines == room, `room {room}, cursor {at}: {lines} lines leave room unused`)
+	end
+end
+local a, b, c, d = width.slice(3, 2, 5)
+assert(a == 1 and b == 3 and not c and not d, "everything fits: no markers")
+a, b, c, d = width.slice(10, 1, 4)
+assert(a == 1 and b == 3 and not c and d, "at the top: three rows and the marker below")
+a, b, c, d = width.slice(10, 10, 4)
+assert(a == 8 and b == 10 and c and not d, "at the bottom: the marker above and three rows")
+a, b, c, d = width.slice(0, 1, -1)
+assert(a == 1 and b == 0 and not c and not d, "an empty list is an empty range, whatever the room")
 
 print("parse: ok")

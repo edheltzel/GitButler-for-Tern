@@ -4,6 +4,7 @@
 -- command lenses (lenses.luau). Blocks read `but … --json` in the background.
 
 local gb = require("./gb")
+local width = require("./width")
 local ui = tern.ui
 local letter = gb.letter
 local STATUS_TEXT = gb.STATUS_TEXT
@@ -23,7 +24,8 @@ type Row = {
 	lane: number,
 	id: string,
 	label: string,
-	branch: string?, -- the branch it belongs to (branch, commit and cfile rows)
+	branch: string?, -- the branch it belongs to (branch, commit and cfile rows); "" for an anonymous segment
+	bkey: string?, -- key of that branch's row: identifies anonymous segments too
 	path: string?,
 	change: string?,
 	changeId: string?, -- full change id of a commit, or of a committed file's commit
@@ -128,11 +130,12 @@ local function build_rows(state: State)
 			end
 			for _, b in stack.branches do
 				local name = gb.label(b)
-				add(lane, { key = key_of("b", b.id), kind = "branch", lane = lane, id = if b.name ~= "" then b.name else b.id, label = name, branch = b.name })
+				local bkey = key_of("b", b.id)
+				add(lane, { key = bkey, kind = "branch", lane = lane, id = if b.name ~= "" then b.name else b.id, label = name, branch = b.name, bkey = bkey })
 				for _, c in b.commits do
-					add(lane, { key = key_of("c", c.id), kind = "commit", lane = lane, id = c.id, label = c.title, branch = b.name, changeId = c.changeId, message = c.message })
+					add(lane, { key = key_of("c", c.id), kind = "commit", lane = lane, id = c.id, label = c.title, branch = b.name, bkey = bkey, changeId = c.changeId, message = c.message })
 					for _, f in c.files do
-						add(lane, { key = key_of("cf", f.id), kind = "cfile", lane = lane, id = f.id, label = f.path, branch = b.name, path = f.path, change = f.change, changeId = c.changeId })
+						add(lane, { key = key_of("cf", f.id), kind = "cfile", lane = lane, id = f.id, label = f.path, branch = b.name, bkey = bkey, path = f.path, change = f.change, changeId = c.changeId })
 					end
 				end
 			end
@@ -163,10 +166,16 @@ local function selected(state: State): Row?
 	return state.rows[index_of(state)]
 end
 
-local function refresh(state: State)
+local function refresh(state: State, after: ((any) -> ())?)
 	-- A sheet's closure already captured its targets. Swapping the model
 	-- under it can retarget the action, so skip the read until it closes.
-	if not alive(state) or state.loading or state.sheet ~= nil or state.busy ~= nil then
+	if not alive(state) then
+		return
+	end
+	if state.loading or state.sheet ~= nil or state.busy ~= nil then
+		if after then
+			after(nil)
+		end
 		return
 	end
 	state.loading = true
@@ -177,6 +186,9 @@ local function refresh(state: State)
 		end
 		state.loading = false
 		if token ~= state.reads or state.sheet ~= nil or state.busy ~= nil then
+			if after then
+				after(nil)
+			end
 			state.cx:render()
 			return
 		end
@@ -193,11 +205,17 @@ local function refresh(state: State)
 				build_rows(state)
 			end
 		end
+		if after then
+			after(if model then r.data else nil)
+		end
 		state.cx:render()
 	end)
 	if err then
 		state.loading = false
 		state.problem = err
+		if after then
+			after(nil)
+		end
 	end
 end
 
@@ -319,27 +337,13 @@ local KEYS_HELP = "↑↓ move  ←→ lanes  ⏎ diff  space mark  c commit  m 
 
 local PICK_FOOT = "↑↓ choose  ⏎ ok  1-9 pick  esc cancel"
 
--- Terminal cells of one line. ponytail: code points from U+2E80 up (CJK,
--- Hangul, fullwidth, emoji) count as 2 cells and everything else as 1; use a
--- real wcwidth table if combining marks or narrower wide ranges matter.
-local function cells(line: string): number
-	local ok, n = pcall(function(): number
-		local w = 0
-		for _, c in utf8.codes(line) do
-			w += if c >= 0x2E80 then 2 else 1
-		end
-		return w
-	end)
-	return if ok then n else #line
-end
-
 -- Lines `text` takes in the dock: its own lines, each wrapped at the pane
 -- width minus the block's side padding (about 12 cells, measured at 78 cols).
 local function wrapped(state: State, text: string): number
-	local width = math.max(1, state.cx.cols - 12)
+	local cols = math.max(1, state.cx.cols - 12)
 	local n = 0
 	for line in string.gmatch(text .. "\n", "(.-)\n") do
-		n += math.max(1, math.ceil(cells(line) / width))
+		n += math.max(1, math.ceil(width.cells(line) / cols))
 	end
 	return n
 end
@@ -497,7 +501,6 @@ end
 -- They draw with `el` nodes styled by styles.css (scoped to this block).
 -- main never scrolls, so each view shows a window of rows around the cursor.
 local VIEWS = { "lanes", "graph", "stacks", "branches" }
-local VIEW_TITLE: { [string]: string } = { lanes = "lanes", graph = "graph", stacks = "stacks", branches = "branches" }
 
 -- Which rows the keyboard walks in each view.
 local function walkable(state: State, row: Row): boolean
@@ -509,7 +512,7 @@ local function walkable(state: State, row: Row): boolean
 		if row.kind == "branch" then
 			-- a branch with commits is a pill on its first commit row
 			for _, r in state.lanes[row.lane] or {} do
-				if r.kind == "commit" and r.branch == row.branch then
+				if r.kind == "commit" and r.bkey == row.key then
 					return false
 				end
 			end
@@ -550,12 +553,18 @@ end
 local function branch_of_row(model: gb.Model, row: Row): gb.Branch?
 	for _, stack in model.stacks do
 		for _, b in stack.branches do
-			if key_of("b", b.id) == row.key or (row.kind ~= "branch" and row.lane > 1 and b.name ~= "" and b.name == row.branch) then
+			if row.bkey ~= nil and key_of("b", b.id) == row.bkey then
 				return b
 			end
 		end
 	end
 	return nil
+end
+
+-- What a row's branch is called (anonymous segments get gb.label's name).
+local function branch_label(model: gb.Model, row: Row): string
+	local b = branch_of_row(model, row)
+	return if b then gb.label(b) else (row.branch or row.label)
 end
 
 local function commit_of_row(model: gb.Model, row: Row): gb.Commit?
@@ -603,26 +612,27 @@ local function file_line(state: State, row: Row, assigned: { [string]: string }?
 	return kids
 end
 
--- Rows in [first, last] of `list` around the cursor, at most `room` of them.
-local function window(list: { Row }, cursor: string?, room: number): (number, number)
+-- Rows in [first, last] of `list` around the cursor, and whether the
+-- "↑ N more" / "↓ N more" lines fit (width.slice): callers draw a marker only
+-- when its flag is set, so rows and markers never take more than `room` lines.
+local function window(list: { Row }, cursor: string?, room: number): (number, number, boolean, boolean)
 	local at = 1
 	for i, r in list do
 		if r.key == cursor then
 			at = i
 		end
 	end
-	local n = math.max(1, room)
-	local first = math.clamp(at - n // 2, 1, math.max(1, #list - n + 1))
-	return first, math.min(#list, first + n - 1)
+	return width.slice(#list, at, room)
 end
 
 local function hint(keys: string): Node
 	return sp(keys, "bp-hint")
 end
 
--- Worst-case detail pane height, in list rows: title, badges, 3 kv lines, a
--- 4-line body, "Files", 7 file lines, the hint, and the gaps between them.
-local DETAIL_LINES = 16
+-- Worst-case detail pane height, in list rows (LH+6 px each): 18 text lines
+-- (title, badges, 3 kv lines, a 4-line body, "Files", 7 file lines, the hint)
+-- plus the 7 gaps and padding come to about 17; 18 leaves a line for a wrap.
+local DETAIL_LINES = 18
 
 -- The selected row, as a detail pane (graph view).
 local function detail_pane(state: State, model: gb.Model, assigned: { [string]: string }): Node
@@ -634,14 +644,14 @@ local function detail_pane(state: State, model: gb.Model, assigned: { [string]: 
 		table.insert(kids, sp(row.label, "bp-dh"))
 		table.insert(kids, el("bp-badges", {
 			ui.badge(row.change or "changed", "warning"),
-			ui.badge(if row.kind == "cfile" then "in " .. (row.branch or "commit") else (assigned[row.label] and ("→ " .. assigned[row.label]) or "unassigned"), "muted"),
+			el("bp-label", { ui.badge(if row.kind == "cfile" then "in " .. (row.branch or "commit") else (assigned[row.label] and ("→ " .. assigned[row.label]) or "unassigned"), "muted") }),
 		}))
 		table.insert(kids, hint(if row.kind == "file" then "⏎ diff  space mark  c commit  m move  A absorb" else "⏎ diff  m move"))
 	else
 		local b = branch_of_row(model, row)
 		local c = if row.kind == "commit" then commit_of_row(model, row) else nil
 		table.insert(kids, sp(if c then c.title else row.label, "bp-dh"))
-		local badges: { Node } = { ui.badge("⎇ " .. (row.branch or row.label), "accent"), status_badge(b) }
+		local badges: { Node } = { el("bp-label", { ui.badge("⎇ " .. branch_label(model, row), "accent") }), status_badge(b) }
 		if c and c.conflicted then
 			table.insert(badges, ui.badge("conflicted", "error"))
 		end
@@ -736,13 +746,15 @@ local function graph_view(state: State, model: gb.Model): Node
 				local head = r.kind == "branch"
 				if r.kind == "commit" then
 					local prev = list[i - 1]
-					head = prev == nil or prev.branch ~= r.branch or prev.lane ~= r.lane
+					head = prev == nil or prev.bkey ~= r.bkey
 				end
 				table.insert(parts, el(if r.kind == "branch" then "bp-dot bp-ring bp-hollow" elseif head then "bp-dot bp-ring" else "bp-dot"))
 			elseif r == nil and lane == 2 then
 				table.insert(parts, el("bp-dot bp-base"))
 			elseif r == nil and start then
-				table.insert(parts, el("bp-join bp-j" .. math.min(lane - 2, 4)))
+				-- reaches from this lane's center to lane 2's, however many stacks
+				local w = ((lane - 2) * 2) .. "ch"
+				table.insert(parts, el("bp-join", nil, { min = { w = w }, max = { w = w } }))
 			end
 			table.insert(cells, el("bp-ln " .. lane_class(lane), parts))
 		end
@@ -754,9 +766,9 @@ local function graph_view(state: State, model: gb.Model): Node
 	if state.cx.cols < 110 then
 		room = math.max(3, room - DETAIL_LINES)
 	end
-	local lo, hi = window(list, state.cursor, room)
+	local lo, hi, up, down = window(list, state.cursor, room)
 	local lines: { Node } = {}
-	if lo > 1 then
+	if up then
 		table.insert(lines, el("bp-more", { sp("↑ " .. (lo - 1) .. " more", "bp-dim") }))
 	end
 	for i = lo, hi do
@@ -772,9 +784,9 @@ local function graph_view(state: State, model: gb.Model): Node
 			end
 		else
 			local prev = list[i - 1]
-			if prev == nil or prev.branch ~= r.branch or prev.lane ~= r.lane then
+			if prev == nil or prev.bkey ~= r.bkey then
 				local b = branch_of_row(model, r)
-				table.insert(ref, ui.badge(r.branch or r.label, if b and b.status == "nothingToPush" then "success" else "accent"))
+				table.insert(ref, ui.badge(branch_label(model, r), if b and b.status == "nothingToPush" then "success" else "accent"))
 			end
 			if r.kind == "commit" then
 				local c = commit_of_row(model, r)
@@ -789,9 +801,9 @@ local function graph_view(state: State, model: gb.Model): Node
 		end
 		table.insert(lines, pickable(state, r, "bp-r", { el("bp-ref", ref), graph(i, r), el("bp-msg", msg) }))
 	end
-	if hi < #list then
+	if down then
 		table.insert(lines, el("bp-more", { sp("↓ " .. (#list - hi) .. " more", "bp-dim") }))
-	else
+	elseif hi == #list then
 		table.insert(lines, el("bp-r", { el("bp-ref", { ui.badge("base", "muted") }), graph(base, nil), el("bp-msg", { sp("common base", "bp-dim") }) }, { key = "base" }))
 	end
 	local left = el("bp-ga", {
@@ -813,14 +825,14 @@ local function stacks_view(state: State, model: gb.Model): Node
 	local room = math.max(2, fit_lines(list_px(state) - 5 * LH) // 2 // col_lines) -- cards are two lines
 	local tray: { Node } = { sp("Uncommitted " .. #model.unassigned, "bp-tray-h") }
 	local chips = state.lanes[1] or {}
-	local tlo, thi = window(chips, state.cursor, math.max(1, (state.cx.cols - 20) // 24))
-	if tlo > 1 then
+	local tlo, thi, tup, tdown = window(chips, state.cursor, math.max(1, (state.cx.cols - 20) // 24))
+	if tup then
 		table.insert(tray, sp("+" .. (tlo - 1), "bp-dim"))
 	end
 	for i = tlo, thi do
 		table.insert(tray, pickable(state, chips[i], "bp-chip", file_line(state, chips[i], nil)))
 	end
-	if thi < #chips then
+	if tdown then
 		table.insert(tray, sp("+" .. (#chips - thi) .. " more", "bp-dim"))
 	end
 	local cols: { Node } = {}
@@ -831,9 +843,9 @@ local function stacks_view(state: State, model: gb.Model): Node
 				table.insert(rows, r)
 			end
 		end
-		local lo, hi = window(rows, state.cursor, room)
+		local lo, hi, up, down = window(rows, state.cursor, room)
 		local kids: { Node } = {}
-		if lo > 1 then
+		if up then
 			table.insert(kids, sp("↑ " .. (lo - 1) .. " more", "bp-dim"))
 		end
 		for i = lo, hi do
@@ -846,7 +858,7 @@ local function stacks_view(state: State, model: gb.Model): Node
 					status_badge(b),
 				}))
 				if below then
-					table.insert(kids, sp("stacked on " .. gb.label(below), "bp-dim"))
+					table.insert(kids, sp("stacked on " .. gb.label(below), "bp-dim bp-clip"))
 				end
 			elseif r.kind == "commit" then
 				local c = commit_of_row(model, r)
@@ -861,7 +873,7 @@ local function stacks_view(state: State, model: gb.Model): Node
 				table.insert(kids, pickable(state, r, "bp-f", file_line(state, r, assigned)))
 			end
 		end
-		if hi < #rows then
+		if down then
 			table.insert(kids, sp("↓ " .. (#rows - hi) .. " more", "bp-dim"))
 		end
 		table.insert(cols, el("bp-sc " .. lane_class(lane), kids))
@@ -870,8 +882,8 @@ local function stacks_view(state: State, model: gb.Model): Node
 	local foot: { Node } = {}
 	if row then
 		table.insert(foot, sp(row.label, "bp-t"))
-		if row.branch then
-			table.insert(foot, sp("on " .. row.branch, "bp-dim"))
+		if row.kind == "commit" or row.kind == "cfile" then
+			table.insert(foot, sp("on " .. branch_label(model, row), "bp-dim"))
 		end
 	end
 	local columns = el("bp-cols", cols, { key = "cols" })
@@ -892,15 +904,19 @@ local function branches_view(state: State, model: gb.Model): Node
 	if state.cx.cols < 110 then
 		side_room = math.max(3, side_room // 2) -- the branch pane stacks below
 	end
-	local lo, hi = window(list, state.cursor, side_room)
+	local lo, hi, up, down = window(list, state.cursor, side_room)
 	local last = 0
-	if lo > 1 then
+	-- Sidebar height in px (styles.css .bp-side): 6px padding top and bottom,
+	-- a 2px gap per item, a .bp-sh header's 8px margin, a .bp-sb row's 6px padding.
+	local side_px = 12 + (hi - lo + 1) * (LH + 8) + ((if up then 1 else 0) + (if down then 1 else 0)) * (LH + 2)
+	if up then
 		table.insert(side, sp("↑ " .. (lo - 1) .. " more", "bp-dim"))
 	end
 	for i = lo, hi do
 		local r = list[i]
 		if r.lane ~= last then
 			last = r.lane
+			side_px += LH + 10
 			table.insert(side, sp(if r.lane == 1 then "Uncommitted " .. #model.unassigned else "Stack " .. (r.lane - 1), if r.lane == 1 then "bp-sh bp-warn" else "bp-sh"))
 		end
 		if r.kind == "file" then
@@ -915,7 +931,7 @@ local function branches_view(state: State, model: gb.Model): Node
 			}))
 		end
 	end
-	if hi < #list then
+	if down then
 		table.insert(side, sp("↓ " .. (#list - hi) .. " more", "bp-dim"))
 	end
 
@@ -923,24 +939,34 @@ local function branches_view(state: State, model: gb.Model): Node
 	local main: { Node } = {}
 	-- Side by side only when the reported width surely fits both panes;
 	-- otherwise the sidebar and this pane stack and share the height.
-	local room = fit_lines(list_px(state) - 4 * LH)
+	-- .bp-cmain: 8px padding top and bottom, the 1.4em title, the badge row,
+	-- the hint and the three 10px gaps between them.
+	local main_px = list_px(state) - (16 + (LH + 9) + (LH + 1) + LH + 30)
 	if state.cx.cols < 110 then
-		room = math.max(2, room - (hi - lo + 1 + #state.lanes))
+		main_px -= side_px
 	end
+	local room = fit_lines(main_px)
 	if row and row.kind == "file" then
-		table.insert(main, sp("Uncommitted changes", "bp-h1"))
-		table.insert(main, el("bp-badges", { ui.badge(#model.unassigned .. " files", "warning") }))
+		-- the files of the selected file's own lane: uncommitted, or assigned to a stack
+		local all: { Row } = {}
+		for _, r in state.lanes[row.lane] or {} do
+			if r.kind == "file" then
+				table.insert(all, r)
+			end
+		end
+		local stack = if row.lane > 1 then model.stacks[row.lane - 1] else nil
+		table.insert(main, sp(if stack and stack.branches[1] then "Assigned to " .. gb.label(stack.branches[1]) else "Uncommitted changes", "bp-h1"))
+		table.insert(main, el("bp-badges", { ui.badge(#all .. (if #all == 1 then " file" else " files"), "warning") }))
 		local files: { Node } = {}
-		local all = state.lanes[1] or {}
-		local flo, fhi = window(all, state.cursor, room)
-		if flo > 1 then
+		local flo, fhi, fup, fdown = window(all, state.cursor, room)
+		if fup then
 			table.insert(files, sp("↑ " .. (flo - 1) .. " more", "bp-dim"))
 		end
 		for i = flo, fhi do
 			local r = all[i]
 			table.insert(files, el("bp-f" .. (if r.key == state.cursor then " bp-sel" else ""), file_line(state, r, assigned)))
 		end
-		if fhi < #all then
+		if fdown then
 			table.insert(files, sp("↓ " .. (#all - fhi) .. " more", "bp-dim"))
 		end
 		table.insert(main, el("bp-files", files))
@@ -949,44 +975,58 @@ local function branches_view(state: State, model: gb.Model): Node
 		local b = branch_of_row(model, row)
 		local below = if b then below_of(model, b) else nil
 		table.insert(main, sp(row.label, "bp-h1"))
-		local badges: { Node } = { status_badge(b) }
-		if b then
-			table.insert(badges, ui.badge(#b.commits .. (if #b.commits == 1 then " commit" else " commits"), "neutral"))
-			if b.review then
-				table.insert(badges, ui.badge("PR " .. b.review, "info"))
-			end
+		-- the commit count leads, so a clipped badge row still shows hidden commits
+		local badges: { Node } = {}
+		local hidden = 0
+		local rest: { Node } = { status_badge(b) }
+		if b and b.review then
+			table.insert(rest, ui.badge("PR " .. b.review, "info"))
 		end
-		table.insert(badges, ui.badge(if below then "stacked on " .. gb.label(below) else "on the target", "muted"))
-		table.insert(main, el("bp-badges", badges))
+		table.insert(rest, el("bp-label", { ui.badge(if below then "stacked on " .. gb.label(below) else "on the target", "muted") }))
 		local spine: { Node } = {}
-		local used = 0
+		-- Budgeted in px, not list rows: a commit block costs its title line, the
+		-- .bp-sp-b padding (2 + 10) and title gap (2) plus 3 for a badge in the
+		-- title; each file line costs one LH (styles.css .bp-sp-b / .bp-files).
+		local SPINE_COMMIT, SPINE_FILE = LH + 17, LH
+		local budget, used = main_px, 0
 		for ci, c in (if b then b.commits else {}) do
-			if used + 1 > room then
-				table.insert(spine, sp("… " .. (#(b :: gb.Branch).commits - ci + 1) .. " more commits", "bp-dim"))
+			if used + SPINE_COMMIT > budget then
+				hidden = #(b :: gb.Branch).commits - ci + 1
 				break
 			end
-			-- a commit shows as many of its files as still fit
-			local fit = math.max(0, math.min(#c.files, room - used - 1))
+			-- a commit shows as many of its files as still fit; the rest are
+			-- counted on its title line, so the count never takes a line itself
+			local fit = math.max(0, math.min(#c.files, (budget - used - SPINE_COMMIT) // SPINE_FILE))
 			local files: { Node } = {}
 			for fi = 1, fit do
 				local f = c.files[fi]
 				table.insert(files, el("bp-f", { sp(letter(f.change), "bp-ch bp-ch-" .. letter(f.change)), sp(f.path, "bp-path"), sp(f.id, "bp-id") }))
 			end
-			if fit < #c.files then
-				table.insert(files, sp("+" .. (#c.files - fit) .. " files", "bp-dim"))
-			end
-			used += 1 + fit + (if fit < #c.files then 1 else 0)
+			used += SPINE_COMMIT + fit * SPINE_FILE
 			table.insert(spine, el("bp-sp " .. lane_class(row.lane), {
 				el("bp-sp-g", { el("bp-sp-line"), el(if ci == 1 then "bp-dot bp-ring" else "bp-dot") }),
 				el("bp-sp-b", {
-					el("bp-sp-t", { sp(c.title, "bp-t"), sp(c.id, "bp-id"), if c.conflicted then ui.badge("conflicted", "error") else sp("", "") }),
+					el("bp-sp-t", {
+						sp(c.title, "bp-t"),
+						sp(c.id, "bp-id"),
+						if fit < #c.files then sp("+" .. (#c.files - fit) .. " files", "bp-dim") else sp("", ""),
+						if c.conflicted then ui.badge("conflicted", "error") else sp("", ""),
+					}),
 					el("bp-files", files),
 				}),
 			}))
 		end
 		if b == nil or #b.commits == 0 then
-			table.insert(spine, sp("No commits yet. Mark files and press c to commit here.", "bp-dim"))
+			table.insert(spine, sp("No commits yet. Mark files and press c to commit here.", "bp-dim bp-clip"))
 		end
+		if b then
+			local count = #b.commits .. (if #b.commits == 1 then " commit" else " commits")
+			table.insert(badges, ui.badge(if hidden > 0 then count .. ", " .. hidden .. " not shown" else count, if hidden > 0 then "warning" else "neutral"))
+		end
+		for _, badge in rest do
+			table.insert(badges, badge)
+		end
+		table.insert(main, el("bp-badges", badges))
 		table.insert(main, el("bp-spine", spine))
 		table.insert(main, hint("p push  P PR  e rename  N stack a branch  u unapply  L land"))
 	end
@@ -1076,7 +1116,7 @@ local function cycle_view(state: State)
 	state.view = VIEWS[at % #VIEWS + 1]
 	tern.kv.set("view", state.view)
 	settle_cursor(state)
-	state.notice = { tone = "muted", text = "View: " .. VIEW_TITLE[state.view] .. "  (v to switch)" }
+	state.notice = { tone = "muted", text = "View: " .. state.view .. "  (v to switch)" }
 end
 
 -- Actions. Every write is one `but` command, run in the background; one at
@@ -1103,9 +1143,9 @@ local function command_line(args: { string }): string
 	return table.concat(parts, " ")
 end
 
--- Runs `but <args> --json`; on success toasts `done`, clears the marks and
--- re-reads the workspace.
-local function mutate(state: State, label: string, args: { string }, timeout_ms: number, done: string)
+-- Runs `but <args> --json`; on success shows `done` (or what `done` makes of
+-- the reply: text and a tone), clears the marks and re-reads the workspace.
+local function mutate(state: State, label: string, args: { string }, timeout_ms: number, done: string | (data: any, workspace: any) -> (string, string?))
 	if state.busy then
 		return
 	end
@@ -1119,15 +1159,30 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 		end
 		state.busy = nil
 		if r.ok then
-			notify(state, "success", done)
-			state.cx:toast("success", done, command_line(args))
+			local function show(workspace: any)
+				local text, tone = "", "success"
+				if type(done) == "function" then
+					local t, tn = done(r.data, workspace)
+					text, tone = t, tn or "success"
+				else
+					text = done
+				end
+				notify(state, tone, text)
+				state.cx:toast(if tone == "success" then "success" else "info", text, command_line(args))
+			end
 			table.clear(state.marked)
+			if type(done) == "function" then
+				refresh(state, show)
+			else
+				show(nil)
+				refresh(state)
+			end
 		else
 			local why = r.err or "failed"
 			notify(state, "error", command_line(args) .. ": " .. why)
 			state.cx:toast("error", (string.gsub(label, "…$", "")) .. " failed", string.match(why, "^[^\n]*"))
+			refresh(state)
 		end
-		refresh(state)
 		state.cx:render()
 	end)
 	if err then
@@ -2057,41 +2112,123 @@ end
 -- `but pull` rebases every applied branch onto the updated target, so it
 -- confirms as a rewrite. `--check` first says whether there is anything to
 -- take; a reply missing any field this relies on stops the pull instead of
--- confirming blind.
-local function action_pull(state: State)
+-- confirming blind. Pressing y runs `--check` again: if anything changed
+-- while the sheet was open, the sheet reopens with the new facts instead of
+-- pulling.
+type PullPlan = { base: string, count: number, conflicted: { string }, worktree: boolean, upToDate: boolean, snapshot: string }
+
+local function pull_check(state: State, use: (PullPlan) -> ())
 	read(state, "Checking upstream…", { "pull", "--check", "--json" }, function(data: any)
 		local d = if type(data) == "table" then data else {}
 		local up = d.upstreamCommits
-		local base = if type(d.baseBranch) == "table" then d.baseBranch.name else nil
+		local base = if type(d.baseBranch) == "table" then d.baseBranch else {}
 		local n = if type(up) == "table" and type(up.count) == "number" then up.count else nil
-		if type(d.upToDate) ~= "boolean" or n == nil or type(base) ~= "string" or type(d.hasWorktreeConflicts) ~= "boolean" or type(d.branchStatuses) ~= "table" then
+		if type(d.upToDate) ~= "boolean" or n == nil or type(base.name) ~= "string" or type(base.remoteName) ~= "string"
+			or type(base.baseSha) ~= "string" or type(base.currentSha) ~= "string"
+			or type(d.hasWorktreeConflicts) ~= "boolean" or type(d.branchStatuses) ~= "table" then
 			notify(state, "error", "but pull --check returned an unexpected reply; not pulling.")
 			return
 		end
-		if d.upToDate then
-			notify(state, "info", "Already up to date with " .. base .. ".")
-			return
-		end
 		local conflicted: { string } = {}
+		local branches: { string } = {}
 		for _, b in d.branchStatuses do
-			if type(b) == "table" and b.status == "conflicted" then
-				table.insert(conflicted, if type(b.name) == "string" then b.name else "?")
+			-- every record must name its branch and state, or the warning could miss one
+			if type(b) ~= "table" or type(b.name) ~= "string" or type(b.status) ~= "string"
+				or (b.rebasable ~= nil and type(b.rebasable) ~= "boolean") then
+				notify(state, "error", "but pull --check returned an unexpected branch status; not pulling.")
+				return
+			end
+			table.insert(branches, tern.json.encode({ b.name, b.status, b.rebasable }))
+			if b.status == "conflicted" then
+				table.insert(conflicted, b.name)
 			end
 		end
-		local body = {
-			n .. " new commit(s) on " .. base .. ".",
-			"Fetches, then rebases every applied branch onto it.",
-		}
-		if #conflicted > 0 then
-			table.insert(body, "Will conflict: " .. table.concat(conflicted, ", ") .. ". Their commits become conflicted; z undoes the pull.")
+		table.sort(conflicted)
+		table.sort(branches)
+		local snapshot = tern.json.encode({ base.name, base.remoteName, base.baseSha, base.currentSha, branches })
+		use({ base = base.name, count = n, conflicted = conflicted, worktree = d.hasWorktreeConflicts, upToDate = d.upToDate, snapshot = snapshot })
+	end)
+end
+
+local function same_plan(a: PullPlan, b: PullPlan): boolean
+	return a.snapshot == b.snapshot and a.count == b.count and a.worktree == b.worktree and a.upToDate == b.upToDate
+end
+
+local function pull_result(plan: PullPlan, result: any, workspace: any): (string, string?)
+	local base = plan.base
+	local status = if type(result) == "table" then result.status else nil
+	local list = if type(result) == "table" then result.conflicts else nil
+	local names: { string } = {}
+	for _, c in (if type(list) == "table" then list else {}) do
+		table.insert(names, if type(c) == "table" and type(c.branch) == "string" then c.branch else "?")
+	end
+	local parts: { string } = {}
+	if #names > 0 then
+		table.insert(parts, "conflicts in " .. table.concat(names, ", "))
+	elseif status == "completed_with_conflicts" then
+		table.insert(parts, "conflicts but did not name (check the lanes)")
+	elseif status ~= "completed" and status ~= "up_to_date" then
+		table.insert(parts, "an unconfirmed result (but reported status " .. tostring(status) .. "; check the lanes)")
+	end
+	local files = if type(workspace) == "table" then workspace.conflictedFiles else nil
+	if type(workspace) ~= "table" or (files ~= nil and type(files) ~= "table") then
+		table.insert(parts, "an unconfirmed worktree status (check the Uncommitted lane)")
+	elseif files ~= nil then
+		local unresolved: { string } = {}
+		local valid = true
+		for _, path in files do
+			if type(path) == "string" then
+				table.insert(unresolved, path)
+			else
+				valid = false
+			end
 		end
-		if d.hasWorktreeConflicts then
-			table.insert(body, "Uncommitted changes conflict with upstream.")
+		if not valid then
+			table.insert(parts, "an unconfirmed worktree status (check the Uncommitted lane)")
+		elseif #unresolved > 0 then
+			table.insert(parts, "unresolved file conflicts in " .. table.concat(unresolved, ", "))
 		end
-		local done = if #conflicted > 0 then "Pulled " .. base .. " with conflicts in " .. table.concat(conflicted, ", ") else "Pulled " .. base
-		confirm(state, "Pull " .. base, body, { "pull" }, true, function()
-			mutate(state, "Pulling…", { "pull" }, NETWORK_TIMEOUT_MS, done)
+	end
+	local prefix = if status == "up_to_date" then "Already up to date with " .. base else "Pulled " .. base
+	if #parts > 0 then
+		return prefix .. " with " .. table.concat(parts, " and ") .. (if status == "up_to_date" then "." else ". z undoes the pull."), "warning"
+	end
+	return prefix .. (if status == "up_to_date" then "." else ""), if status == "up_to_date" then "info" else nil
+end
+
+local function confirm_pull(state: State, plan: PullPlan, changed: boolean)
+	if plan.upToDate then
+		notify(state, "info", "Already up to date with " .. plan.base .. ".")
+		return
+	end
+	local body: { string } = {}
+	if changed then
+		table.insert(body, "Upstream or your workspace changed while this was open; this is the new picture.")
+	end
+	table.insert(body, plan.count .. " new commit(s) on " .. plan.base .. ".")
+	table.insert(body, "Fetches, then rebases every applied branch onto it.")
+	if #plan.conflicted > 0 then
+		table.insert(body, "Will conflict: " .. table.concat(plan.conflicted, ", ") .. ". Their commits become conflicted; z undoes the pull.")
+	end
+	if plan.worktree then
+		table.insert(body, "Uncommitted changes conflict with upstream.")
+	end
+	confirm(state, "Pull " .. plan.base, body, { "pull" }, true, function()
+		pull_check(state, function(now: PullPlan)
+			if not same_plan(plan, now) then
+				confirm_pull(state, now, true)
+				return
+			end
+			mutate(state, "Pulling…", { "pull" }, NETWORK_TIMEOUT_MS, function(result: any, workspace: any): (string, string?)
+				return pull_result(now, result, workspace)
+			end)
 		end)
+	end)
+end
+
+local function action_pull(state: State)
+	pull_check(state, function(plan: PullPlan)
+		confirm_pull(state, plan, false)
 	end)
 end
 

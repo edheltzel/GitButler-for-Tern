@@ -14,6 +14,7 @@
 [data-surface="plugin.gitbutler.workspace"] .bp-t { color: var(--ink); }
 [data-surface="plugin.gitbutler.workspace"] .bp-id { color: var(--ink3); margin-left: var(--bp-cw); }
 [data-surface="plugin.gitbutler.workspace"] .bp-dim { color: var(--ink3); }
+[data-surface="plugin.gitbutler.workspace"] .bp-clip { white-space: nowrap; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-acc { color: var(--accent-ink); }
 [data-surface="plugin.gitbutler.workspace"] .bp-asg { margin-left: calc(var(--bp-cw) * 2); }
 [data-surface="plugin.gitbutler.workspace"] .bp-warn { color: var(--warn); }
@@ -27,7 +28,11 @@
 [data-surface="plugin.gitbutler.workspace"] .bp-path { color: var(--ink2); }
 [data-surface="plugin.gitbutler.workspace"] .bp-f { display: flex; align-items: center; white-space: nowrap; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-files { display: flex; flex-direction: column; }
-[data-surface="plugin.gitbutler.workspace"] .bp-badges { display: flex; gap: var(--bp-cw); flex-wrap: wrap; }
+/* Every line the views budget is one line: text clips instead of wrapping. */
+[data-surface="plugin.gitbutler.workspace"] .bp-badges { display: flex; gap: var(--bp-cw); flex-wrap: nowrap; overflow: hidden; }
+[data-surface="plugin.gitbutler.workspace"] .bp-badges > * { flex-shrink: 0; }
+[data-surface="plugin.gitbutler.workspace"] .bp-badges > .bp-label { flex-shrink: 1; min-width: 0; overflow: hidden; }
+[data-surface="plugin.gitbutler.workspace"] .bp-label > .sf-badge { display: block; overflow: hidden; text-overflow: ellipsis; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sel { background-color: var(--l2); }
 [data-surface="plugin.gitbutler.workspace"] .sf-act { cursor: pointer; }
 [data-surface="plugin.gitbutler.workspace"] .bp-dot { position: absolute; left: calc(50% - 4px); top: calc(50% - 4px); width: 8px; height: 8px; border-radius: 50%; background-color: var(--lane); }
@@ -47,22 +52,20 @@
 [data-surface="plugin.gitbutler.workspace"] .bp-ln { position: relative; width: calc(var(--bp-cw) * 2); }
 [data-surface="plugin.gitbutler.workspace"] .bp-lt { position: absolute; left: calc(50% - 1px); top: 0; height: 50%; width: 2px; background-color: var(--lane); }
 [data-surface="plugin.gitbutler.workspace"] .bp-lb { position: absolute; left: calc(50% - 1px); top: 50%; height: 50%; width: 2px; background-color: var(--lane); }
-[data-surface="plugin.gitbutler.workspace"] .bp-join { position: absolute; right: 50%; top: calc(50% - 1px); height: 2px; background-color: var(--lane); }
-[data-surface="plugin.gitbutler.workspace"] .bp-j1 { width: calc(var(--bp-cw) * 2); }
-[data-surface="plugin.gitbutler.workspace"] .bp-j2 { width: calc(var(--bp-cw) * 4); }
-[data-surface="plugin.gitbutler.workspace"] .bp-j3 { width: calc(var(--bp-cw) * 6); }
-[data-surface="plugin.gitbutler.workspace"] .bp-j4 { width: calc(var(--bp-cw) * 8); }
+[data-surface="plugin.gitbutler.workspace"] .bp-join { position: absolute; right: 50%; top: calc(50% - 1px); height: 2px; background-color: var(--lane); } /* width set inline from the lane offset */
 [data-surface="plugin.gitbutler.workspace"] .bp-msg { display: flex; align-items: center; flex-grow: 1; min-width: 0; overflow: hidden; white-space: nowrap; gap: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-more { padding: 0 8px; }
 [data-surface="plugin.gitbutler.workspace"] .bp-detail { border-left: 1px solid var(--l2); padding: 8px calc(var(--bp-cw) * 2); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-[data-surface="plugin.gitbutler.workspace"] .bp-dh { font-size: 1.15em; font-weight: 600; color: var(--ink); }
+[data-surface="plugin.gitbutler.workspace"] .bp-dh { font-size: 1.15em; line-height: 1.35; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sub { color: var(--ink3); }
-[data-surface="plugin.gitbutler.workspace"] .bp-body { color: var(--ink2); white-space: pre-wrap; }
+[data-surface="plugin.gitbutler.workspace"] .bp-body { color: var(--ink2); white-space: pre; overflow: hidden; }
 
 /* stacks */
-[data-surface="plugin.gitbutler.workspace"] .bp-tray { display: flex; align-items: center; flex-wrap: wrap; gap: var(--bp-cw); padding: 6px 8px; border: 1px dashed var(--l3); border-radius: 8px; }
+[data-surface="plugin.gitbutler.workspace"] .bp-tray { display: flex; align-items: center; gap: var(--bp-cw); padding: 6px 8px; border: 1px dashed var(--l3); border-radius: 8px; white-space: nowrap; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-tray-h { color: var(--warn); font-weight: 600; margin-right: var(--bp-cw); }
-[data-surface="plugin.gitbutler.workspace"] .bp-chip { display: flex; align-items: center; padding: 1px var(--bp-cw); border-radius: 6px; background-color: var(--chip-bg); }
+[data-surface="plugin.gitbutler.workspace"] .bp-chip { display: flex; align-items: center; padding: 1px var(--bp-cw); border-radius: 6px; background-color: var(--chip-bg); box-sizing: border-box; max-width: calc(var(--bp-cw) * 23); min-width: 0; overflow: hidden; }
+[data-surface="plugin.gitbutler.workspace"] .bp-chip > * { flex-shrink: 0; }
+[data-surface="plugin.gitbutler.workspace"] .bp-chip > .bp-path { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 [data-surface="plugin.gitbutler.workspace"] .bp-chip.bp-sel { background-color: var(--l3); }
 [data-surface="plugin.gitbutler.workspace"] .bp-bh { display: flex; align-items: center; justify-content: space-between; gap: var(--bp-cw); margin-top: 4px; padding: 2px 4px; border-radius: 4px; }
 [data-surface="plugin.gitbutler.workspace"] .bp-bh-n { font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; }
@@ -74,22 +77,22 @@
 [data-surface="plugin.gitbutler.workspace"] .bp-split-b.bp-split-graph { flex-grow: 2; flex-basis: calc(var(--bp-cw) * 40); }
 [data-surface="plugin.gitbutler.workspace"] .bp-split-a.bp-split-branches { flex-grow: 1; flex-basis: calc(var(--bp-cw) * 30); }
 [data-surface="plugin.gitbutler.workspace"] .bp-split-b.bp-split-branches { flex-grow: 3; flex-basis: calc(var(--bp-cw) * 50); }
-[data-surface="plugin.gitbutler.workspace"] .bp-cc { padding: 4px var(--bp-cw) 4px calc(var(--bp-cw) * 1.5); border-left: 3px solid var(--lane); border-radius: 4px; background-color: var(--l1); }
+[data-surface="plugin.gitbutler.workspace"] .bp-cc { padding: 4px var(--bp-cw) 4px calc(var(--bp-cw) * 1.5); border-left: 3px solid var(--lane); border-radius: 4px; background-color: var(--l1); white-space: nowrap; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-cc.bp-sel { background-color: var(--l3); }
 [data-surface="plugin.gitbutler.workspace"] .bp-cc-meta { display: flex; justify-content: space-between; }
-[data-surface="plugin.gitbutler.workspace"] .bp-foot { display: flex; gap: calc(var(--bp-cw) * 2); padding: 4px 8px; border-top: 1px solid var(--l2); }
+[data-surface="plugin.gitbutler.workspace"] .bp-foot { display: flex; gap: calc(var(--bp-cw) * 2); padding: 4px 8px; border-top: 1px solid var(--l2); white-space: nowrap; overflow: hidden; }
 
 /* branches */
 [data-surface="plugin.gitbutler.workspace"] .bp-side { display: flex; flex-direction: column; gap: 2px; padding: 6px var(--bp-cw); border-right: 1px solid var(--l2); min-width: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sh { color: var(--ink3); margin-top: 8px; }
-[data-surface="plugin.gitbutler.workspace"] .bp-sb { display: flex; align-items: center; gap: var(--bp-cw); padding: 3px var(--bp-cw); border-left: 3px solid var(--lane); border-radius: 4px; }
+[data-surface="plugin.gitbutler.workspace"] .bp-sb { display: flex; align-items: center; gap: var(--bp-cw); padding: 3px var(--bp-cw); border-left: 3px solid var(--lane); border-radius: 4px; white-space: nowrap; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sb.bp-sb-file { border-left-color: transparent; gap: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sb-n { flex-grow: 1; color: var(--ink); white-space: nowrap; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sb-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-ok { background-color: var(--ok); }
 [data-surface="plugin.gitbutler.workspace"] .bp-warnbg { background-color: var(--warn); }
 [data-surface="plugin.gitbutler.workspace"] .bp-cmain { display: flex; flex-direction: column; gap: 10px; padding: 8px calc(var(--bp-cw) * 3); min-width: 0; }
-[data-surface="plugin.gitbutler.workspace"] .bp-h1 { font-size: 1.4em; font-weight: 600; color: var(--ink); }
+[data-surface="plugin.gitbutler.workspace"] .bp-h1 { font-size: 1.4em; line-height: 1.35; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-spine { display: flex; flex-direction: column; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sp { display: flex; align-items: stretch; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sp-g { position: relative; width: calc(var(--bp-cw) * 3); flex-shrink: 0; }
@@ -97,4 +100,7 @@
 [data-surface="plugin.gitbutler.workspace"] .bp-sp .bp-dot { top: 6px; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sp .bp-dot.bp-ring { top: 4px; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sp-b { padding: 2px 0 10px var(--bp-cw); display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-[data-surface="plugin.gitbutler.workspace"] .bp-sp-t { display: flex; align-items: center; gap: var(--bp-cw); }
+[data-surface="plugin.gitbutler.workspace"] .bp-sp-t { display: flex; align-items: center; gap: var(--bp-cw); white-space: nowrap; overflow: hidden; }
+/* the title gives way first, so the id and "+N files" stay on screen */
+[data-surface="plugin.gitbutler.workspace"] .bp-sp-t > * { flex-shrink: 0; }
+[data-surface="plugin.gitbutler.workspace"] .bp-sp-t > .bp-t { flex-shrink: 1; min-width: 0; overflow: hidden; }

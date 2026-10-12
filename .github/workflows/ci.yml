@@ -8,8 +8,10 @@ on:
 permissions:
   contents: read
 
+# A newer push to a PR replaces its run; each run on main has its own group,
+# so none is cancelled or replaced while pending.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 env:
@@ -30,7 +32,12 @@ jobs:
 
       - name: Lint
         run: |
-          cd plugin && rc=0; out=$(luau-analyze $(ls *.luau | grep -v '^tern\.d\.luau$') 2>&1) || rc=$?; [ $rc -le 1 ] && ! printf '%s\n' "$out" | grep SyntaxError
+          cd plugin || exit 1
+          set --
+          for f in *.luau; do [ "$f" = tern.d.luau ] || set -- "$@" "$f"; done
+          rc=0
+          out=$(luau-analyze "$@" 2>&1) || rc=$?
+          [ "$rc" -le 1 ] && ! printf '%s\n' "$out" | grep -F '): SyntaxError:'
 
       - name: Test
         run: |
