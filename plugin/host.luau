@@ -166,10 +166,16 @@ local function selected(state: State): Row?
 	return state.rows[index_of(state)]
 end
 
-local function refresh(state: State)
+local function refresh(state: State, after: ((any) -> ())?)
 	-- A sheet's closure already captured its targets. Swapping the model
 	-- under it can retarget the action, so skip the read until it closes.
-	if not alive(state) or state.loading or state.sheet ~= nil or state.busy ~= nil then
+	if not alive(state) then
+		return
+	end
+	if state.loading or state.sheet ~= nil or state.busy ~= nil then
+		if after then
+			after(nil)
+		end
 		return
 	end
 	state.loading = true
@@ -196,11 +202,17 @@ local function refresh(state: State)
 				build_rows(state)
 			end
 		end
+		if after then
+			after(if model then r.data else nil)
+		end
 		state.cx:render()
 	end)
 	if err then
 		state.loading = false
 		state.problem = err
+		if after then
+			after(nil)
+		end
 	end
 end
 
@@ -1123,7 +1135,7 @@ end
 
 -- Runs `but <args> --json`; on success shows `done` (or what `done` makes of
 -- the reply: text and a tone), clears the marks and re-reads the workspace.
-local function mutate(state: State, label: string, args: { string }, timeout_ms: number, done: string | (data: any) -> (string, string?))
+local function mutate(state: State, label: string, args: { string }, timeout_ms: number, done: string | (data: any, workspace: any) -> (string, string?))
 	if state.busy then
 		return
 	end
@@ -1137,22 +1149,30 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 		end
 		state.busy = nil
 		if r.ok then
-			local text, tone = "", "success"
-			if type(done) == "function" then
-				local t, tn = done(r.data)
-				text, tone = t, tn or "success"
-			else
-				text = done
+			local function show(workspace: any)
+				local text, tone = "", "success"
+				if type(done) == "function" then
+					local t, tn = done(r.data, workspace)
+					text, tone = t, tn or "success"
+				else
+					text = done
+				end
+				notify(state, tone, text)
+				state.cx:toast(if tone == "success" then "success" else "info", text, command_line(args))
 			end
-			notify(state, tone, text)
-			state.cx:toast(if tone == "success" then "success" else "info", text, command_line(args))
 			table.clear(state.marked)
+			if type(done) == "function" then
+				refresh(state, show)
+			else
+				show(nil)
+				refresh(state)
+			end
 		else
 			local why = r.err or "failed"
 			notify(state, "error", command_line(args) .. ": " .. why)
 			state.cx:toast("error", (string.gsub(label, "…$", "")) .. " failed", string.match(why, "^[^\n]*"))
+			refresh(state)
 		end
-		refresh(state)
 		state.cx:render()
 	end)
 	if err then
@@ -2084,48 +2104,50 @@ end
 -- take; a reply missing any field this relies on stops the pull instead of
 -- confirming blind. Pressing y runs `--check` again: if anything changed
 -- while the sheet was open, the sheet reopens with the new facts instead of
--- pulling. `but pull --json` reports conflicts from branch states only, so
--- uncommitted-change conflicts come from that last check.
-type PullPlan = { base: string, count: number, conflicted: { string }, worktree: boolean, upToDate: boolean }
+-- pulling.
+type PullPlan = { base: string, count: number, conflicted: { string }, worktree: boolean, upToDate: boolean, snapshot: string }
 
 local function pull_check(state: State, use: (PullPlan) -> ())
 	read(state, "Checking upstream…", { "pull", "--check", "--json" }, function(data: any)
 		local d = if type(data) == "table" then data else {}
 		local up = d.upstreamCommits
-		local base = if type(d.baseBranch) == "table" then d.baseBranch.name else nil
+		local base = if type(d.baseBranch) == "table" then d.baseBranch else {}
 		local n = if type(up) == "table" and type(up.count) == "number" then up.count else nil
-		if type(d.upToDate) ~= "boolean" or n == nil or type(base) ~= "string" or type(d.hasWorktreeConflicts) ~= "boolean" or type(d.branchStatuses) ~= "table" then
+		if type(d.upToDate) ~= "boolean" or n == nil or type(base.name) ~= "string" or type(base.remoteName) ~= "string"
+			or type(base.baseSha) ~= "string" or type(base.currentSha) ~= "string"
+			or type(d.hasWorktreeConflicts) ~= "boolean" or type(d.branchStatuses) ~= "table" then
 			notify(state, "error", "but pull --check returned an unexpected reply; not pulling.")
 			return
 		end
 		local conflicted: { string } = {}
+		local branches: { string } = {}
 		for _, b in d.branchStatuses do
 			-- every record must name its branch and state, or the warning could miss one
-			if type(b) ~= "table" or type(b.name) ~= "string" or type(b.status) ~= "string" then
+			if type(b) ~= "table" or type(b.name) ~= "string" or type(b.status) ~= "string"
+				or (b.rebasable ~= nil and type(b.rebasable) ~= "boolean") then
 				notify(state, "error", "but pull --check returned an unexpected branch status; not pulling.")
 				return
 			end
+			table.insert(branches, tern.json.encode({ b.name, b.status, b.rebasable }))
 			if b.status == "conflicted" then
 				table.insert(conflicted, b.name)
 			end
 		end
 		table.sort(conflicted)
-		use({ base = base, count = n, conflicted = conflicted, worktree = d.hasWorktreeConflicts, upToDate = d.upToDate })
+		table.sort(branches)
+		local snapshot = tern.json.encode({ base.name, base.remoteName, base.baseSha, base.currentSha, branches })
+		use({ base = base.name, count = n, conflicted = conflicted, worktree = d.hasWorktreeConflicts, upToDate = d.upToDate, snapshot = snapshot })
 	end)
 end
 
 local function same_plan(a: PullPlan, b: PullPlan): boolean
-	return a.base == b.base and a.count == b.count and a.worktree == b.worktree and a.upToDate == b.upToDate
-		and table.concat(a.conflicted, "\n") == table.concat(b.conflicted, "\n")
+	return a.snapshot == b.snapshot and a.count == b.count and a.worktree == b.worktree and a.upToDate == b.upToDate
 end
 
-local function pull_result(plan: PullPlan, result: any): (string, string?)
+local function pull_result(plan: PullPlan, result: any, workspace: any): (string, string?)
 	local base = plan.base
 	local status = if type(result) == "table" then result.status else nil
 	local list = if type(result) == "table" then result.conflicts else nil
-	if status == "up_to_date" then
-		return "Already up to date with " .. base .. ".", "info"
-	end
 	local names: { string } = {}
 	for _, c in (if type(list) == "table" then list else {}) do
 		table.insert(names, if type(c) == "table" and type(c.branch) == "string" then c.branch else "?")
@@ -2135,16 +2157,33 @@ local function pull_result(plan: PullPlan, result: any): (string, string?)
 		table.insert(parts, "conflicts in " .. table.concat(names, ", "))
 	elseif status == "completed_with_conflicts" then
 		table.insert(parts, "conflicts but did not name (check the lanes)")
-	elseif status ~= "completed" then
+	elseif status ~= "completed" and status ~= "up_to_date" then
 		table.insert(parts, "an unconfirmed result (but reported status " .. tostring(status) .. "; check the lanes)")
 	end
-	if plan.worktree then
-		table.insert(parts, "uncommitted changes that conflicted with upstream (check the Uncommitted lane)")
+	local files = if type(workspace) == "table" then workspace.conflictedFiles else nil
+	if type(workspace) ~= "table" or (files ~= nil and type(files) ~= "table") then
+		table.insert(parts, "an unconfirmed worktree status (check the Uncommitted lane)")
+	elseif files ~= nil then
+		local unresolved: { string } = {}
+		local valid = true
+		for _, path in files do
+			if type(path) == "string" then
+				table.insert(unresolved, path)
+			else
+				valid = false
+			end
+		end
+		if not valid then
+			table.insert(parts, "an unconfirmed worktree status (check the Uncommitted lane)")
+		elseif #unresolved > 0 then
+			table.insert(parts, "unresolved file conflicts in " .. table.concat(unresolved, ", "))
+		end
 	end
+	local prefix = if status == "up_to_date" then "Already up to date with " .. base else "Pulled " .. base
 	if #parts > 0 then
-		return "Pulled " .. base .. " with " .. table.concat(parts, " and ") .. ". z undoes the pull.", "warning"
+		return prefix .. " with " .. table.concat(parts, " and ") .. (if status == "up_to_date" then "." else ". z undoes the pull."), "warning"
 	end
-	return "Pulled " .. base
+	return prefix .. (if status == "up_to_date" then "." else ""), if status == "up_to_date" then "info" else nil
 end
 
 local function confirm_pull(state: State, plan: PullPlan, changed: boolean)
@@ -2170,8 +2209,8 @@ local function confirm_pull(state: State, plan: PullPlan, changed: boolean)
 				confirm_pull(state, now, true)
 				return
 			end
-			mutate(state, "Pulling…", { "pull" }, NETWORK_TIMEOUT_MS, function(result: any): (string, string?)
-				return pull_result(now, result)
+			mutate(state, "Pulling…", { "pull" }, NETWORK_TIMEOUT_MS, function(result: any, workspace: any): (string, string?)
+				return pull_result(now, result, workspace)
 			end)
 		end)
 	end)
