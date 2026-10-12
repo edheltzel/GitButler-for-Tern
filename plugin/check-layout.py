@@ -135,6 +135,69 @@ local function last_target(main)
 end
 do
     local state, cx = init("graph", 78, 30, 12)
+    fixture = status(12)
+    fixture.uncommittedChanges = {}
+    workspace.key(state, { name = "r" }, cx)
+    check(positions(workspace.view(state, cx).main)["c-c5"] ~= nil,
+        "the fifth commit must be visible before the dock notice")
+    workspace.event(state, { ev = "action", act = "pick", value = "c-c5" }, cx)
+    check(positions(workspace.view(state, cx).main)["c-c5"] ~= nil,
+        "pointer selection moved the fifth commit before the dock notice")
+    workspace.key(state, { name = "c" }, cx)
+    local after = workspace.view(state, cx)
+    local notified = false
+    visit(after.dock, function(node)
+        if node.k == "text" then
+            for _, span in node.p.spans do
+                if span.t == "Nothing to commit." then notified = true end
+            end
+        end
+    end)
+    check(notified, "committing an empty workspace must show its notice")
+    check(state.cursor == "c-c5" and positions(after.main)["c-c5"] ~= nil,
+        "the Nothing to commit notice hid the selected fifth commit")
+    workspace.key(state, { name = "enter" }, cx)
+    check(string.find(cx.opened, "&id=c5&label=", 1, true) ~= nil,
+        "the visible fifth commit must remain the action target")
+end
+for _, view in { "lanes", "graph", "stacks", "branches" } do
+    for _, field in { "notice", "problem", "busy", "loading" } do
+        local state, cx = init(view, 78, 30, 12)
+        fixture = status(12)
+        fixture.uncommittedChanges = {}
+        workspace.key(state, { name = "r" }, cx)
+        local target = last_target(workspace.view(state, cx).main)
+        workspace.event(state, { ev = "action", act = "pick", value = target }, cx)
+        if field == "notice" then
+            state.notice = { tone = "warning", text = string.rep("n", 70) }
+        elseif field == "problem" then
+            state.problem = string.rep("e", 70)
+        elseif field == "busy" then
+            state.busy = string.rep("b", 70)
+        else
+            state.loading = true
+        end
+        check(state.cursor == target and positions(workspace.view(state, cx).main)[target] ~= nil,
+            view .. ": growing the " .. field .. " dock output hid the selection")
+        state[field] = if field == "loading" then false else nil
+        check(state.cursor == target and positions(workspace.view(state, cx).main)[target] ~= nil,
+            view .. ": removing the " .. field .. " dock output hid the selection")
+    end
+end
+do
+    local state, cx = init("graph", 78, 30, 12)
+    state.notice = { tone = "info", text = "A notice" }
+    local before = positions(workspace.view(state, cx).main)
+    local target = last_target(workspace.view(state, cx).main)
+    workspace.event(state, { ev = "action", act = "pick", value = target }, cx)
+    state.notice = { tone = "warning", text = "B notice" }
+    local after = positions(workspace.view(state, cx).main)
+    for key, path in before do
+        check(after[key] == path, "a same-height notice or pointer selection moved " .. key)
+    end
+end
+do
+    local state, cx = init("graph", 78, 30, 12)
     check(positions(workspace.view(state, cx).main)["c-c4"] ~= nil,
         "the reported fourth commit must be visible before the click")
     workspace.event(state, { ev = "action", act = "pick", value = "c-c4" }, cx)
@@ -175,7 +238,7 @@ for _, view in { "lanes", "graph", "stacks", "branches" } do
         view .. ": inserting rows on refresh hid the surviving selection")
 end
 for _, view in { "branches", "stacks" } do
-    for _, transition in { "resize", "refresh" } do
+    for _, transition in { "resize", "refresh", "dock" } do
         local state, cx = init(view, 160, 30, 0)
         fixture = status(0)
         for i = 2, 12 do
@@ -188,6 +251,9 @@ for _, view in { "branches", "stacks" } do
         local after
         if transition == "resize" then
             after = resize(state, cx, 78, 24)
+        elseif transition == "dock" then
+            state.problem = string.rep("e", 70)
+            after = workspace.view(state, cx)
         else
             local files = table.clone(fixture.uncommittedChanges)
             fixture = status(0)

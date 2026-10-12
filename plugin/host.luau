@@ -60,6 +60,7 @@ type State = {
 	lanes: { { Row } },
 	cursor: string?,
 	viewport: string?,
+	list_budget: number?,
 	marked: { [string]: boolean }, -- uncommitted file paths, not CLI ids
 	loading: boolean,
 	fetched: number?,
@@ -2484,6 +2485,7 @@ tern.block.define("workspace", {
 			lanes = {},
 			cursor = nil,
 			viewport = nil,
+			list_budget = nil,
 			marked = {},
 			loading = false,
 			fetched = nil,
@@ -2531,6 +2533,11 @@ tern.block.define("workspace", {
 			table.insert(main, sheet)
 		else
 			settle_cursor(state)
+			local budget = list_px(state)
+			if state.list_budget ~= budget then
+				state.viewport = state.cursor
+				state.list_budget = budget
+			end
 			local view = state.view
 			table.insert(main, if view == "graph" then graph_view(state, model)
 				elseif view == "stacks" then stacks_view(state, model)
