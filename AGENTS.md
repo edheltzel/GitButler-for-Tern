@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Butler Pane (https://github.com/edheltzel/Butler-Pane): a Tern plugin (Luau) that teaches Tern about GitButler: a status segment, a workspace block, a diff block, command lenses, and actions, all driven by the `but` CLI. Design and findings: `DESIGN.md`. User guide: `README.md`. The plugin id stays `gitbutler`, so command ids remain `plugin.gitbutler.*`.
+Butler Pane (https://github.com/edheltzel/Butler-Pane): a Tern plugin (Luau) that teaches Tern about GitButler: a status segment, a workspace block, a diff block, command lenses, and actions, all driven by the `but` CLI. Design and findings: `DESIGN.md`. User guide: `README.md`. The plugin id stays `gitbutler`, so command ids remain `plugin.gitbutler.*`; its display name in Tern (`plugin.toml` `name`, the palette group and `tern plugin list`) is `GitButler`.
 
 ## DOX
 

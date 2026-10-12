@@ -1,6 +1,6 @@
 schema = 1
 id = "gitbutler"
-name = "Butler Pane"
+name = "GitButler"
 version = "0.1.0"
 description = "GitButler workspaces in Tern: lanes, assignments, absorb, oplog, push, PR and land, all through `but`."
 icon = "git-branch"
