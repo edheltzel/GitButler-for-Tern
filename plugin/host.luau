@@ -3068,7 +3068,8 @@ tern.block.define("workspace", {
 			sheet_key(state, key)
 			return true
 		end
-		if key.ctrl or key.alt or key.meta then
+		-- A paste is text, not a keypress: it never starts an action.
+		if key.ctrl or key.alt or key.meta or key.name == "paste" then
 			return false
 		end
 		local k = key.text or key.name
