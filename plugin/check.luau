@@ -206,6 +206,7 @@ assert(width.cells("\u{1100}\u{1161}") == 2, "decomposed Hangul syllable is one 
 assert(width.cells("❤\u{FE0E}\u{200D}🔥") == 3, "VS15 before a ZWJ ends the sequence")
 assert(width.cells("⌚\u{FE0E}\u{200D}🔥") == 3, "VS15 before a ZWJ ends the sequence")
 assert(width.cells("🔥\u{FE0E}") == 2, "VS15 without a variation sequence changes nothing")
+assert(width.cells("❤\u{200D}🔥") == 2, "a ZWJ join makes a text-width base an emoji")
 assert(width.cells("→ x") == 3)
 assert(width.cells("\255\254") == 2)
 

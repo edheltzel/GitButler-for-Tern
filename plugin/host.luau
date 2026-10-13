@@ -59,7 +59,8 @@ type State = {
 	rows: { Row },
 	lanes: { { Row } },
 	cursor: string?,
-	top_lane: number?, -- lane drawn first; keyboard and programmatic moves only
+	viewport: string?,
+	list_budget: number?,
 	marked: { [string]: boolean }, -- uncommitted file paths, not CLI ids
 	loading: boolean,
 	fetched: number?,
@@ -102,7 +103,7 @@ local function alive(state: State): boolean
 	return false
 end
 
--- Keys become node ids (`main.lanes.L2.rows.<key>`): keep them to safe characters.
+-- Keys become node ids: keep them to safe characters.
 local function key_of(kind: string, id: string): string
 	return kind .. "-" .. (string.gsub(id, "[^%w_:%-]", "_"))
 end
@@ -149,13 +150,13 @@ local function build_rows(state: State)
 	if not found then
 		local row = rows[1]
 		state.cursor = if row then row.key else nil
-		state.top_lane = if row then row.lane else nil
 	end
+	state.viewport = state.cursor
 end
 
-local function index_of(state: State): number
+local function index_of(state: State, key: string?): number
 	for i, r in state.rows do
-		if r.key == state.cursor then
+		if r.key == key then
 			return i
 		end
 	end
@@ -163,7 +164,7 @@ local function index_of(state: State): number
 end
 
 local function selected(state: State): Row?
-	return state.rows[index_of(state)]
+	return state.rows[index_of(state, state.cursor)]
 end
 
 local function refresh(state: State, after: ((any) -> ())?)
@@ -260,78 +261,17 @@ local function assignments(model: gb.Model): { [string]: string }
 	return out
 end
 
-local function item(state: State, row: Row, model: gb.Model, assigned: { [string]: string }): Item
-	if row.kind == "file" then
-		local mark = if row.path and state.marked[row.path] then ui.span("● ", "accent") else ui.span("  ")
-		local where = assigned[row.label]
-		return {
-			label = { mark, ui.span(letter(row.change or "") .. " ", "warning mono"), ui.span(row.id .. " ", "muted mono"), row.label },
-			value = if row.lane == 1
-				then (if where then ui.span("→ " .. where, "accent") else ui.span("unassigned", "muted"))
-				else ui.span("assigned", "accent"),
-			icon = "file",
-		}
-	elseif row.kind == "branch" then
-		local b: gb.Branch? = nil
-		for _, stack in model.stacks do
-			for _, candidate in stack.branches do
-				if key_of("b", candidate.id) == row.key then
-					b = candidate
-				end
-			end
-		end
-		local status = if b then STATUS_TEXT[b.status] else nil
-		local value: { Span | string } = {}
-		if b and b.review then
-			table.insert(value, ui.span("PR " .. b.review .. "  ", "info"))
-		end
-		if b and b.upstream > 0 then
-			table.insert(value, ui.span(b.upstream .. " upstream  ", "warning"))
-		end
-		if status then
-			table.insert(value, ui.span(status[1], status[2]))
-		end
-		return { label = { ui.span(row.label, "strong") }, value = value, icon = "git-branch" }
-	elseif row.kind == "commit" then
-		return {
-			label = { ui.span("  " .. row.id .. " ", "muted mono"), row.label },
-			icon = "git-commit",
-		}
-	end
-	return {
-		label = { ui.span("      " .. letter(row.change or "") .. " ", "muted mono"), ui.span(row.id .. " ", "muted mono"), ui.span(row.label, "muted") },
-		icon = "file",
-	}
-end
-
-local function lane_head(state: State, lane: number, model: gb.Model): Spans
-	if lane == 1 then
-		return { ui.span("Uncommitted", "strong"), ui.span("  " .. #model.unassigned, "muted num") }
-	end
-	local stack = model.stacks[lane - 1]
-	local names: { string } = {}
-	for _, b in stack.branches do
-		table.insert(names, gb.label(b))
-	end
-	local head: { Span | string } = { ui.span(names[1] or stack.id, "strong") }
-	if #names > 1 then
-		table.insert(head, ui.span("  stack of " .. #names, "muted"))
-	end
-	return head
-end
--- A list row is one terminal line plus 6px, and only a capped list scrolls
--- to its selection. main never scrolls, so the keyboard lane is drawn first
--- and the cap is design px (--sf-lh fallback 17), not cells. A click sets
--- the cursor without reordering, or the second hit of a double-click lands
--- on whatever moved into that slot.
--- Chrome is a static estimate; revisit if Tern's card metrics change.
+-- A row is one terminal line plus 6px (`.bp-r`, --bp-row). main never
+-- scrolls, so the cap is design px (--sf-lh fallback 17), not cells.
+-- Lane card chrome (HEAD, BODY, GAP) matches .bp-lane/.bp-lh/.bp-lanes in
+-- styles.css; the main padding and dock gap are Tern's, a static estimate.
 -- 60 cells and 2 dock lines: floor((1020 - 29 - 42 - 34) / 23) = 39.
 local LH = 17
 local ROW = LH + 6
 local HEAD = LH + 12
 local BODY = 10
 local PADS = BODY + 12 + 4 + 16 -- body, main padding, dock gap, block gap
-local GAP = 6 -- ui.col gap-sm between lane cards
+local GAP = 6 -- .bp-lanes gap between lane cards
 
 local KEYS_HELP = "↑↓ move  ←→ lanes  ⏎ diff  space mark  c commit  m move  A absorb  e reword  n/N branch  a/u apply/unapply  z undo  O oplog  p push  P PR  L land  f pull  v view  ? help"
 
@@ -401,105 +341,11 @@ local function picker_lines(state: State): number
 	return fit_lines(list_px(state) - wrapped(state, PICK_FOOT) * LH)
 end
 
-local function lanes_view(state: State, model: gb.Model): Node
-	local assigned = assignments(model)
-	local current = selected(state)
-	local current_lane = if current then current.lane else 1
-	-- Keyboard lane first, then the others. Keys stay L<n> under `lanes`,
-	-- so ids remain main.lanes.L<n>.rows.<key>. If the cursor lane would
-	-- not be drawn, draw that one first instead.
-	local function order_lanes(first: number): { number }
-		local order: { number } = {}
-		if state.lanes[first] then
-			table.insert(order, first)
-		end
-		for lane = 1, #state.lanes do
-			if lane ~= first then
-				table.insert(order, lane)
-			end
-		end
-		return order
-	end
-	local function lane_drawn(order: { number }, want: number): boolean
-		local left = list_px(state)
-		local n = 0
-		for _, lane in order do
-			local rows = state.lanes[lane]
-			local extra = if n == 0 then 0 else GAP + HEAD + BODY
-			local room = left - extra
-			if n > 0 and room < ROW then
-				return false
-			end
-			if lane == want then
-				return true
-			end
-			local shown = math.max(1, math.min(#rows, fit_lines(room)))
-			left -= extra + shown * ROW
-			n += 1
-		end
-		return false
-	end
-	local first = state.top_lane
-	if first == nil or state.lanes[first] == nil then
-		first = 1
-	end
-	local order = order_lanes(first)
-	if current and not lane_drawn(order, current.lane) then
-		order = order_lanes(current.lane)
-	end
-	local function lane_card(lane: number, rows: { Row }, cap: number): Node
-		local items: { Item } = {}
-		for _, row in rows do
-			table.insert(items, item(state, row, model, assigned))
-		end
-		local list = ui.list(items)
-		local kids = list.c or {}
-		for i, row in rows do
-			local p: { [string]: any } = kids[i].p or {}
-			p.key = row.key
-			kids[i].p = p
-		end
-		local lp: { [string]: any } = list.p or {}
-		lp.key = "rows"
-		lp.empty = { ui.span(if lane == 1 then "No uncommitted changes." else "No commits yet.", "muted") }
-		if current and current.lane == lane then
-			lp.selected = "main.lanes.L" .. lane .. ".rows." .. current.key
-		end
-		lp.max = { lines = cap }
-		list.p = lp
-		local card = ui.card(lane_head(state, lane, model), { list })
-		local cp: { [string]: any } = card.p or {}
-		cp.key = "L" .. lane
-		cp.tone = if current and current.lane == lane then "accent" else nil
-		card.p = cp
-		return card
-	end
-	local left = list_px(state)
-	local cards: { Node } = {}
-	for _, lane in order do
-		local rows = state.lanes[lane]
-		local extra = if #cards == 0 then 0 else GAP + HEAD + BODY
-		local room = left - extra
-		if #cards > 0 and room < ROW then
-			break
-		end
-		local cap = fit_lines(room)
-		local shown = math.max(1, math.min(#rows, cap))
-		table.insert(cards, lane_card(lane, rows, cap))
-		left -= extra + shown * ROW
-	end
-	-- A side-by-side row does not bring the selected lane into view.
-	local lanes = ui.col(cards)
-	local p: { [string]: any } = lanes.p or {}
-	p.key = "lanes"
-	lanes.p = p
-	return lanes
-end
 
--- Alternative views over the same rows and cursor, so every action works in
--- each. `v` cycles them; the choice is kept in tern.kv for new blocks.
--- They draw with `el` nodes styled by styles.css (scoped to this block).
--- main never scrolls, so each view shows a window of rows around the cursor.
+-- The views share the rows and cursor, so every action works in each. `v`
+-- cycles them; the choice is kept in tern.kv for new blocks. They draw with
+-- `el` nodes styled by styles.css (scoped to this block). See DESIGN.md
+-- for viewport anchoring and height budgets.
 local VIEWS = { "lanes", "graph", "stacks", "branches" }
 
 -- Which rows the keyboard walks in each view.
@@ -612,10 +458,13 @@ local function file_line(state: State, row: Row, assigned: { [string]: string }?
 	return kids
 end
 
--- Rows in [first, last] of `list` around the cursor, and whether the
+-- Rows in [first, last] of `list` around the supplied anchor, and whether the
 -- "↑ N more" / "↓ N more" lines fit (width.slice): callers draw a marker only
 -- when its flag is set, so rows and markers never take more than `room` lines.
 local function window(list: { Row }, cursor: string?, room: number): (number, number, boolean, boolean)
+	if room < 1 then
+		return 1, 0, false, false
+	end
 	local at = 1
 	for i, r in list do
 		if r.key == cursor then
@@ -629,28 +478,40 @@ local function hint(keys: string): Node
 	return sp(keys, "bp-hint")
 end
 
--- Worst-case detail pane height, in list rows (LH+6 px each): 18 text lines
--- (title, badges, 3 kv lines, a 4-line body, "Files", 7 file lines, the hint)
--- plus the 7 gaps and padding come to about 17; 18 leaves a line for a wrap.
-local DETAIL_LINES = 18
-
--- The selected row, as a detail pane (graph view).
-local function detail_pane(state: State, model: gb.Model, assigned: { [string]: string }): Node
+local function detail_pane(state: State, model: gb.Model, assigned: { [string]: string }): (Node, number)
+	local available = math.max(0, list_px(state))
+	local budget = if state.cx.cols < 110 then math.min(384, available // 2) else available
+	if budget < 16 then
+		return el(""), budget
+	end
 	local row = selected(state)
 	local kids: { Node } = {}
+	local px = 8
+	local limit = budget - (LH + 8)
+	local keys: string? = nil
+	local function add(node: Node, lines: number, extra: number?)
+		local cost = 8 + lines * LH + (extra or 0)
+		if lines > 0 and px + cost <= limit then
+			table.insert(kids, node)
+			px += cost
+		end
+	end
+	local function capacity(maximum: number): number
+		return math.max(0, math.min(maximum, (limit - px - 8) // LH))
+	end
 	if row == nil then
-		table.insert(kids, sp("Nothing selected", "bp-dim"))
+		add(sp("Nothing selected", "bp-dim"), 1)
 	elseif row.kind == "file" or row.kind == "cfile" then
-		table.insert(kids, sp(row.label, "bp-dh"))
-		table.insert(kids, el("bp-badges", {
+		add(sp(row.label, "bp-dh"), 1, 5)
+		add(el("bp-badges", {
 			ui.badge(row.change or "changed", "warning"),
 			el("bp-label", { ui.badge(if row.kind == "cfile" then "in " .. (row.branch or "commit") else (assigned[row.label] and ("→ " .. assigned[row.label]) or "unassigned"), "muted") }),
-		}))
-		table.insert(kids, hint(if row.kind == "file" then "⏎ diff  space mark  c commit  m move  A absorb" else "⏎ diff  m move"))
+		}), 1, 3)
+		keys = if row.kind == "file" then "⏎ diff  space mark  c commit  m move  A absorb" else "⏎ diff  m move"
 	else
 		local b = branch_of_row(model, row)
 		local c = if row.kind == "commit" then commit_of_row(model, row) else nil
-		table.insert(kids, sp(if c then c.title else row.label, "bp-dh"))
+		add(sp(if c then c.title else row.label, "bp-dh"), 1, 5)
 		local badges: { Node } = { el("bp-label", { ui.badge("⎇ " .. branch_label(model, row), "accent") }), status_badge(b) }
 		if c and c.conflicted then
 			table.insert(badges, ui.badge("conflicted", "error"))
@@ -658,47 +519,78 @@ local function detail_pane(state: State, model: gb.Model, assigned: { [string]: 
 		if b and b.review then
 			table.insert(badges, ui.badge("PR " .. b.review, "info"))
 		end
-		table.insert(kids, el("bp-badges", badges))
+		add(el("bp-badges", badges), 1, 3)
 		if c then
-			table.insert(kids, ui.kv({
+			limit -= LH + 8
+			add(ui.kv({
 				{ { ui.span("id", "muted") }, { ui.span(c.id, "mono") } },
 				{ { ui.span("change", "muted") }, { ui.span(string.sub(c.changeId, 1, 12), "mono") } },
 				{ { ui.span("sha", "muted") }, { ui.span(string.sub(c.sha, 1, 12), "mono") } },
-			}))
-			-- capped so the pane has a fixed worst-case height (DETAIL_LINES)
+			}), 3, 6)
 			local body = string.match(c.message, "^[^\n]*\n+(.+)$")
-			if body then
+			local cap = capacity(4)
+			if body and cap > 0 then
 				local kept: { string } = {}
 				for line in string.gmatch(body .. "\n", "(.-)\n") do
-					if #kept == 3 then
-						table.insert(kept, "…")
+					if #kept == math.min(3, cap) then
+						if #kept == cap then
+							kept[cap] = "…"
+						else
+							table.insert(kept, "…")
+						end
 						break
 					end
 					table.insert(kept, line)
 				end
-				table.insert(kids, sp(table.concat(kept, "\n"), "bp-body"))
+				add(sp(table.concat(kept, "\n"), "bp-body"), #kept)
 			end
-			table.insert(kids, sp("Files " .. #c.files, "bp-sub"))
+			limit += LH + 8
+			add(sp("Files " .. #c.files, "bp-sub"), 1)
 			local files: { Node } = {}
-			local shown = 0
+			local file_cap = capacity(7)
+			local shown = math.min(6, #c.files, math.max(0, file_cap - (if #c.files > file_cap then 1 else 0)))
 			for _, r in state.rows do
+				if #files == shown then
+					break
+				end
 				if r.kind == "cfile" and r.changeId == c.changeId then
-					if shown == 6 then
-						table.insert(files, sp("+" .. (#c.files - 6) .. " more", "bp-dim"))
-						break
-					end
-					shown += 1
 					table.insert(files, el("bp-f", file_line(state, r, nil)))
 				end
 			end
-			table.insert(kids, el("bp-files", files))
-			table.insert(kids, hint("⏎ diff  e reword  m move  p push  P PR  z undo"))
+			if #c.files > #files and file_cap > 0 then
+				table.insert(files, sp("+" .. (#c.files - #files) .. " more", "bp-dim"))
+			end
+			add(el("bp-files", files), #files)
+			keys = "⏎ diff  e reword  m move  p push  P PR  z undo"
+		elseif b and #b.commits > 0 then
+			-- a branch row (lanes view): where it sits and its newest commits
+			local below = below_of(model, b)
+			limit -= LH + 8
+			add(sp(if below then "stacked on " .. gb.label(below) else "on the target", "bp-dim bp-clip"), 1)
+			limit += LH + 8
+			add(sp("Commits " .. #b.commits, "bp-sub"), 1)
+			local lines: { Node } = {}
+			local cap = capacity(7)
+			local shown = math.min(6, #b.commits, math.max(0, cap - (if #b.commits > cap then 1 else 0)))
+			for i = 1, shown do
+				local bc = b.commits[i]
+				table.insert(lines, el("bp-f", { sp(bc.title, "bp-t"), sp(bc.id, "bp-id") }))
+			end
+			if #b.commits > shown and cap > 0 then
+				table.insert(lines, sp("+" .. (#b.commits - shown) .. " more", "bp-dim"))
+			end
+			add(el("bp-files", lines), #lines)
+			keys = "⏎ diff  e rename  p push  P PR  N stack  L land"
 		else
-			table.insert(kids, sp("No commits yet.", "bp-dim"))
-			table.insert(kids, hint("c commit here  e rename  p push"))
+			add(sp("No commits yet.", "bp-dim"), 1)
+			keys = "c commit here  e rename  p push"
 		end
 	end
-	return el("bp-detail", kids)
+	limit = budget
+	if keys then
+		add(hint(keys), 1)
+	end
+	return el("bp-detail", kids), budget
 end
 
 -- Side by side when the pane is wide, stacked when narrow. CSS decides with
@@ -710,6 +602,140 @@ local function split(_state: State, left: Node, right: Node, side: string): Node
 	rp.class = (rp.class or "") .. " bp-split-b bp-split-" .. side
 	left.p, right.p = lp, rp
 	return el("bp-split", { left, right }, { key = "split" })
+end
+
+-- Lanes: a card per lane (uncommitted, then one per stack), each stack a
+-- line of branches and commits with their files, and the selection's detail
+-- beside it (under it when narrow).
+local function lanes_view(state: State, model: gb.Model): Node
+	local assigned = assignments(model)
+	local current = selected(state)
+	-- A narrow pane puts the detail under the lanes.
+	local detail, detail_px = detail_pane(state, model, assigned)
+	local budget = list_px(state)
+	if state.cx.cols < 110 then
+		budget -= detail_px
+	end
+	local function order_lanes(first: number): { number }
+		local order: { number } = {}
+		if state.lanes[first] then
+			table.insert(order, first)
+		end
+		for lane = 1, #state.lanes do
+			if lane ~= first then
+				table.insert(order, lane)
+			end
+		end
+		return order
+	end
+	local anchor = state.rows[index_of(state, state.viewport)]
+	local first = if anchor then anchor.lane else 1
+	local order = order_lanes(first)
+
+	-- One `.bp-r` line per row. A stack's line runs from its first branch
+	-- (assigned files sit above it) to its last row.
+	local function lane_row(rows: { Row }, i: number, start: number): Node
+		local r = rows[i]
+		if r.kind == "file" then
+			local kids = file_line(state, r, if r.lane == 1 then assigned else nil)
+			if r.lane > 1 then
+				table.insert(kids, 1, el("bp-g bp-ind"))
+			end
+			return pickable(state, r, "bp-r", { el("bp-msg", kids) })
+		end
+		local parts: { Node } = {}
+		if i > start then
+			table.insert(parts, el("bp-lt"))
+		end
+		if i < #rows then
+			table.insert(parts, el("bp-lb"))
+		end
+		local msg: { Node } = {}
+		if r.kind == "branch" then
+			table.insert(parts, el("bp-dot bp-ring"))
+			local b = branch_of_row(model, r)
+			table.insert(msg, sp("⎇ " .. r.label, "bp-bh-n"))
+			local badges: { Node } = {}
+			if b and b.review then
+				table.insert(badges, ui.badge("PR " .. b.review, "info"))
+			end
+			if b and b.upstream > 0 then
+				table.insert(badges, ui.badge(b.upstream .. " upstream", "warning"))
+			end
+			table.insert(badges, status_badge(b))
+			table.insert(msg, el("bp-badges bp-end", badges))
+		elseif r.kind == "commit" then
+			table.insert(parts, el("bp-dot"))
+			local c = commit_of_row(model, r)
+			table.insert(msg, sp(r.label, "bp-t"))
+			table.insert(msg, sp(r.id, "bp-id"))
+			if c and c.conflicted then
+				table.insert(msg, ui.badge("conflicted", "error"))
+			end
+		else
+			table.insert(msg, el("bp-ind"))
+			for _, k in file_line(state, r, nil) do
+				table.insert(msg, k)
+			end
+		end
+		return pickable(state, r, "bp-r", { el("bp-g", { el("bp-ln " .. lane_class(r.lane), parts) }), el("bp-msg", msg) })
+	end
+
+	local function lane_card(lane: number, rows: { Row }, cap: number): Node
+		local on = current ~= nil and current.lane == lane
+		local head: { Node } = {}
+		if lane == 1 then
+			head = { sp("Uncommitted", "bp-lh-n"), sp(tostring(#model.unassigned), "bp-warn") }
+		else
+			local stack = model.stacks[lane - 1]
+			local top = stack.branches[1]
+			head = { sp(if top then gb.label(top) else stack.id, "bp-lh-n") }
+			if #stack.branches > 1 then
+				table.insert(head, sp("stack of " .. #stack.branches, "bp-dim"))
+			end
+		end
+		local start = #rows + 1
+		for i, r in rows do
+			if r.kind ~= "file" then
+				start = i
+				break
+			end
+		end
+		local lo, hi, up, down = window(rows, state.viewport, cap)
+		local body: { Node } = {}
+		if up then
+			table.insert(body, el("bp-r", { el("bp-msg", { sp("↑ " .. (lo - 1) .. " more", "bp-dim") }) }))
+		end
+		for i = lo, hi do
+			table.insert(body, lane_row(rows, i, start))
+		end
+		if down then
+			table.insert(body, el("bp-r", { el("bp-msg", { sp("↓ " .. (#rows - hi) .. " more", "bp-dim") }) }))
+		end
+		if #rows == 0 then
+			table.insert(body, el("bp-r", { el("bp-msg", { sp(if lane == 1 then "No uncommitted changes." else "No commits yet.", "bp-dim") }) }))
+		end
+		return el("bp-lane " .. lane_class(lane) .. (if on then " bp-cur" else ""), {
+			el("bp-lh", head),
+			el("bp-rows", body),
+		}, { key = "L" .. lane })
+	end
+
+	local left = budget
+	local cards: { Node } = {}
+	for _, lane in order do
+		local rows = state.lanes[lane]
+		local extra = if #cards == 0 then 0 else GAP + HEAD + BODY
+		local room = left - extra
+		if room < ROW then
+			break
+		end
+		local cap = fit_lines(room)
+		local shown = math.max(1, math.min(#rows, cap))
+		table.insert(cards, lane_card(lane, rows, cap))
+		left -= extra + shown * ROW
+	end
+	return split(state, el("bp-lanes", cards, { key = "lanes" }), detail, "lanes")
 end
 
 -- Graph: every commit top-down with a lane per stack, joined at the base.
@@ -761,12 +787,14 @@ local function graph_view(state: State, model: gb.Model): Node
 		return el("bp-g", cells, { min = { w = (n * 2) .. "ch" }, max = { w = (n * 2) .. "ch" } })
 	end
 
-	-- A narrow pane puts the detail (at most DETAIL_LINES) under the list.
-	local room = fit_lines(list_px(state)) - 2
+	-- A narrow pane puts the detail under the list.
+	local detail, detail_px = detail_pane(state, model, assigned)
+	local budget = list_px(state)
 	if state.cx.cols < 110 then
-		room = math.max(3, room - DETAIL_LINES)
+		budget -= detail_px
 	end
-	local lo, hi, up, down = window(list, state.cursor, room)
+	local room = fit_lines(budget) - 2
+	local lo, hi, up, down = window(list, state.viewport, room)
 	local lines: { Node } = {}
 	if up then
 		table.insert(lines, el("bp-more", { sp("↑ " .. (lo - 1) .. " more", "bp-dim") }))
@@ -803,14 +831,14 @@ local function graph_view(state: State, model: gb.Model): Node
 	end
 	if down then
 		table.insert(lines, el("bp-more", { sp("↓ " .. (#list - hi) .. " more", "bp-dim") }))
-	elseif hi == #list then
+	elseif room > 0 and hi == #list then
 		table.insert(lines, el("bp-r", { el("bp-ref", { ui.badge("base", "muted") }), graph(base, nil), el("bp-msg", { sp("common base", "bp-dim") }) }, { key = "base" }))
 	end
 	local left = el("bp-ga", {
 		el("bp-gh", { sp("Branch", "bp-gh1"), sp("Graph", "bp-gh2"), sp("Commit", "") }),
 		el("bp-rows", lines),
 	})
-	return split(state, left, detail_pane(state, model, assigned), "graph")
+	return split(state, left, detail, "graph")
 end
 
 -- Stacks: the uncommitted tray, then one column per stack.
@@ -825,7 +853,7 @@ local function stacks_view(state: State, model: gb.Model): Node
 	local room = math.max(2, fit_lines(list_px(state) - 5 * LH) // 2 // col_lines) -- cards are two lines
 	local tray: { Node } = { sp("Uncommitted " .. #model.unassigned, "bp-tray-h") }
 	local chips = state.lanes[1] or {}
-	local tlo, thi, tup, tdown = window(chips, state.cursor, math.max(1, (state.cx.cols - 20) // 24))
+	local tlo, thi, tup, tdown = window(chips, state.viewport, math.max(1, (state.cx.cols - 20) // 24))
 	if tup then
 		table.insert(tray, sp("+" .. (tlo - 1), "bp-dim"))
 	end
@@ -843,7 +871,7 @@ local function stacks_view(state: State, model: gb.Model): Node
 				table.insert(rows, r)
 			end
 		end
-		local lo, hi, up, down = window(rows, state.cursor, room)
+		local lo, hi, up, down = window(rows, state.viewport, room)
 		local kids: { Node } = {}
 		if up then
 			table.insert(kids, sp("↑ " .. (lo - 1) .. " more", "bp-dim"))
@@ -904,7 +932,7 @@ local function branches_view(state: State, model: gb.Model): Node
 	if state.cx.cols < 110 then
 		side_room = math.max(3, side_room // 2) -- the branch pane stacks below
 	end
-	local lo, hi, up, down = window(list, state.cursor, side_room)
+	local lo, hi, up, down = window(list, state.viewport, side_room)
 	local last = 0
 	-- Sidebar height in px (styles.css .bp-side): 6px padding top and bottom,
 	-- a 2px gap per item, a .bp-sh header's 8px margin, a .bp-sb row's 6px padding.
@@ -958,7 +986,7 @@ local function branches_view(state: State, model: gb.Model): Node
 		table.insert(main, sp(if stack and stack.branches[1] then "Assigned to " .. gb.label(stack.branches[1]) else "Uncommitted changes", "bp-h1"))
 		table.insert(main, el("bp-badges", { ui.badge(#all .. (if #all == 1 then " file" else " files"), "warning") }))
 		local files: { Node } = {}
-		local flo, fhi, fup, fdown = window(all, state.cursor, room)
+		local flo, fhi, fup, fdown = window(all, state.viewport, room)
 		if fup then
 			table.insert(files, sp("↑ " .. (flo - 1) .. " more", "bp-dim"))
 		end
@@ -1053,7 +1081,7 @@ local function move_to(state: State, i: number)
 	local row = state.rows[math.clamp(i, 1, math.max(1, #state.rows))]
 	if row then
 		state.cursor = row.key
-		state.top_lane = row.lane
+		state.viewport = row.key
 	end
 end
 
@@ -1064,7 +1092,7 @@ local function move_lane(state: State, delta: number)
 		for _, r in state.lanes[lane] do
 			if walkable(state, r) then
 				state.cursor = r.key
-				state.top_lane = r.lane
+				state.viewport = r.key
 				return
 			end
 		end
@@ -1074,7 +1102,7 @@ end
 
 -- Moves the cursor `delta` walkable rows; past either end it stays put.
 local function step(state: State, delta: number)
-	local i = index_of(state) + delta
+	local i = index_of(state, state.cursor) + delta
 	while state.rows[i] do
 		if walkable(state, state.rows[i]) then
 			move_to(state, i)
@@ -1116,6 +1144,7 @@ local function cycle_view(state: State)
 	state.view = VIEWS[at % #VIEWS + 1]
 	tern.kv.set("view", state.view)
 	settle_cursor(state)
+	state.viewport = state.cursor
 	state.notice = { tone = "muted", text = "View: " .. state.view .. "  (v to switch)" }
 end
 
@@ -2452,7 +2481,8 @@ tern.block.define("workspace", {
 			rows = {},
 			lanes = {},
 			cursor = nil,
-			top_lane = nil,
+			viewport = nil,
+			list_budget = nil,
 			marked = {},
 			loading = false,
 			fetched = nil,
@@ -2473,6 +2503,10 @@ tern.block.define("workspace", {
 
 	title = function(state: State): string?
 		return "GitButler · " .. basename(state.root)
+	end,
+
+	resize = function(state: State)
+		state.viewport = state.cursor
 	end,
 
 	view = function(state: State, _cx: BlockCx): BlockView
@@ -2496,6 +2530,11 @@ tern.block.define("workspace", {
 			table.insert(main, sheet)
 		else
 			settle_cursor(state)
+			local budget = list_px(state)
+			if state.list_budget ~= budget then
+				state.viewport = state.cursor
+				state.list_budget = budget
+			end
 			local view = state.view
 			table.insert(main, if view == "graph" then graph_view(state, model)
 				elseif view == "stacks" then stacks_view(state, model)
@@ -2518,7 +2557,6 @@ tern.block.define("workspace", {
 			return false
 		end
 		local k = key.text or key.name
-		local i = index_of(state)
 		if key.name == "down" or k == "j" then
 			step(state, 1)
 		elseif key.name == "up" or k == "k" then
@@ -2567,7 +2605,7 @@ tern.block.define("workspace", {
 			return
 		end
 		if ev.ev == "action" and (ev.act == "pick" or ev.act == "open") and type(ev.value) == "string" then
-			-- A row in the graph, stacks or branches view (`el` rows, not a list).
+			-- A row in any view (`el` rows with click and double-click actions).
 			if state.sheet == nil then
 				state.cursor = ev.value
 				if ev.act == "open" then
@@ -2592,14 +2630,6 @@ tern.block.define("workspace", {
 				if ev.ev == "activate" and sheet.options and sheet.options[n] then
 					finish_sheet(state, sheet.options[n].value)
 				end
-				return
-			end
-			local key = string.match(ev.item, "%.rows%.(.+)$")
-			if key then
-				state.cursor = key
-			end
-			if ev.ev == "activate" then
-				open_diff(state, cx)
 			end
 		end
 	end,
