@@ -2865,8 +2865,8 @@ local ACTIONS: { [string]: (State) -> () } = {
 	end,
 }
 
--- Actions reachable from outside the block (palette commands send these
--- as `action` events): the same table, by name.
+-- Actions reachable from outside the block (palette commands and the
+-- user's `keybinds` send these as `action` events): ACTIONS and OPS, by name.
 local NAMED: { [string]: string } = {
 	commit = "c",
 	move = "m",
@@ -2883,9 +2883,12 @@ local NAMED: { [string]: string } = {
 	land = "L",
 	pull = "f",
 	help = "?",
+	redo = "redo",
+	discard = "discard",
+	uncommit = "uncommit",
 }
 
--- Board operations that have no key, by name (toolbar and right-click menus).
+-- Operations with no block key, by name (board toolbar, right-click menus, palette).
 local OPS: { [string]: (State) -> () } = {
 	redo = action_redo,
 	discard = action_discard,
@@ -2903,7 +2906,7 @@ local function guarded(state: State, go: () -> ())
 end
 
 local function run_action(state: State, k: string): boolean
-	local action = ACTIONS[k]
+	local action = ACTIONS[k] or OPS[k]
 	if action == nil then
 		return false
 	end
@@ -2940,12 +2943,7 @@ local function board_do(state: State, k: string, key: string?)
 			end
 		end
 	end
-	local go = ACTIONS[k] or OPS[k]
-	if go then
-		guarded(state, function()
-			go(state)
-		end)
-	end
+	run_action(state, k)
 end
 
 -- A board drop button: `<op>:<target row key>`. What moves is the selection
