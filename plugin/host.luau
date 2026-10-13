@@ -262,10 +262,7 @@ local function assignments(model: gb.Model): { [string]: string }
 end
 
 -- A row is one terminal line plus 6px (`.bp-r`, --bp-row). main never
--- scrolls, so the keyboard lane is drawn first and the cap is design px
--- (--sf-lh fallback 17), not cells. A click sets the cursor without
--- reordering, or the second hit of a double-click lands on whatever moved
--- into that slot.
+-- scrolls, so the cap is design px (--sf-lh fallback 17), not cells.
 -- Lane card chrome (HEAD, BODY, GAP) matches .bp-lane/.bp-lh/.bp-lanes in
 -- styles.css; the main padding and dock gap are Tern's, a static estimate.
 -- 60 cells and 2 dock lines: floor((1020 - 29 - 42 - 34) / 23) = 39.
@@ -347,8 +344,8 @@ end
 
 -- The views share the rows and cursor, so every action works in each. `v`
 -- cycles them; the choice is kept in tern.kv for new blocks. They draw with
--- `el` nodes styled by styles.css (scoped to this block). main never
--- scrolls, so each view shows a window of rows around the cursor.
+-- `el` nodes styled by styles.css (scoped to this block). See DESIGN.md
+-- for viewport anchoring and height budgets.
 local VIEWS = { "lanes", "graph", "stacks", "branches" }
 
 -- Which rows the keyboard walks in each view.
@@ -461,7 +458,7 @@ local function file_line(state: State, row: Row, assigned: { [string]: string }?
 	return kids
 end
 
--- Rows in [first, last] of `list` around the cursor, and whether the
+-- Rows in [first, last] of `list` around the supplied anchor, and whether the
 -- "↑ N more" / "↓ N more" lines fit (width.slice): callers draw a marker only
 -- when its flag is set, so rows and markers never take more than `room` lines.
 local function window(list: { Row }, cursor: string?, room: number): (number, number, boolean, boolean)
