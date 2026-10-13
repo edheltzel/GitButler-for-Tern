@@ -1407,7 +1407,7 @@ end
 -- Re-reads status before acting on specific files, so a poll that has not
 -- landed yet cannot hide a mark that no longer matches.
 local function fresh_files(state: State, picked: string?, use: ({ string }?, string) -> ())
-	local wanted = table.clone(state.marked)
+	local wanted = if picked ~= nil then {} else table.clone(state.marked)
 	state.reads += 1
 	read(state, "Checking changes…", { "status", "-f", "--json" }, function(data: any)
 		if apply_status(state, data) == nil then
@@ -1931,10 +1931,11 @@ end
 -- Discards the checked or selected uncommitted files, or the selected
 -- commit, committed file or branch. Always a danger confirm; `but undo`
 -- brings it back.
-local function action_discard(state: State)
+local function action_discard(state: State, card: boolean?)
 	local row = selected(state)
-	if has_marks(state) or (row and row.kind == "file") then
-		local picked = if has_marks(state) or row == nil then nil else row.path
+	local marked = not card and has_marks(state)
+	if marked or (row and row.kind == "file") then
+		local picked = if marked or row == nil then nil else row.path
 		fresh_files(state, picked, function(ids: { string }?, what: string)
 			if ids == nil then
 				notify(state, "warning", "Select or check the files to discard.")
@@ -2905,8 +2906,13 @@ local function guarded(state: State, go: () -> ())
 	end
 end
 
-local function run_action(state: State, k: string): boolean
+local function run_action(state: State, k: string, card: boolean?): boolean
 	local action = ACTIONS[k] or OPS[k]
+	if k == "discard" and card then
+		action = function(s: State)
+			action_discard(s, true)
+		end
+	end
 	if action == nil then
 		return false
 	end
@@ -2937,13 +2943,13 @@ local MENU: { [string]: string } = {
 -- there is one), then runs the action key or board op on it.
 local function board_do(state: State, k: string, key: string?)
 	if key ~= nil then
-		for _, r in state.rows do
-			if r.key == key then
-				state.cursor = key
-			end
+		if index_of(state, key) == 0 then
+			notify(state, "warning", "That card is gone: the workspace changed.")
+			return
 		end
+		state.cursor = key
 	end
-	run_action(state, k)
+	run_action(state, k, key ~= nil)
 end
 
 -- A board drop button: `<op>:<target row key>`. What moves is the selection
@@ -3156,7 +3162,7 @@ tern.block.define("workspace", {
 			-- a board card's right-click item; the card's node id carries its
 			-- row key (`main.….L<lane>.<key>`, then any child index)
 			local key = if type(ev.id) == "string" then string.match(ev.id, "%.L%d+%.([^%.]+)") else nil
-			if state.sheet == nil then
+			if state.sheet == nil and key ~= nil then
 				board_do(state, MENU[ev.act], key)
 			end
 			return
