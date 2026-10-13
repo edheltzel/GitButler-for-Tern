@@ -12,6 +12,7 @@ bootstrap = "local sources = {\n" + "\n".join(
 ) + "\n}\n"
 checks = r'''
 local blocks, modules, fixture = {}, {}, nil
+local processes = {}
 local pane = 0
 local root = "/fixture"
 local ui = {}
@@ -36,7 +37,10 @@ local tern = {
         end,
     },
     pane = { list = function() return { { pane = pane } } end },
-    process = { run = function(_, _, done) done({ stdout = "{}", stderr = "", status = 0 }) end },
+    process = { run = function(argv, _, done)
+        table.insert(processes, table.clone(argv))
+        done({ stdout = "{}", stderr = "", status = 0 })
+    end },
     json = { decode = function() return fixture end, encode = function(data) return tostring(data) end },
     timer = function() return { cancel = function() end } end,
     kv = { get = function() return "lanes" end, set = function() end },
@@ -71,9 +75,13 @@ end
 local function init(view, cols, rows, count)
     pane += 1
     fixture = status(count)
-    local cx = { pane = pane, cwd = root, cols = cols, rows = rows, opened = nil }
+    table.clear(processes)
+    local cx = { pane = pane, cwd = root, cols = cols, rows = rows, opened = nil, toasts = {} }
     function cx:render() end
     function cx:open(url) self.opened = url end
+    function cx:toast(tone, text, sub)
+        table.insert(self.toasts, { tone = tone, text = text, sub = sub })
+    end
     local state = workspace.init(cx, {}, nil)
     state.view = view
     return state, cx
@@ -87,7 +95,7 @@ local function positions(main)
     local found = {}
     visit(main, function(node, path)
         local p = node.p or {}
-        if p.actions and p.actions.click then found[p.key] = path end
+        if p.key and p.actions and p.actions.click then found[p.key] = path end
     end)
     return found
 end
@@ -120,6 +128,70 @@ local function check(ok, message)
     cases += 1
     if not ok then table.insert(failures, message) end
 end
+local function mutations(command)
+    local found = {}
+    for _, argv in processes do
+        if argv[4] == command then table.insert(found, argv) end
+    end
+    return found
+end
+local function with_destination(branch_status)
+    local data = status(1)
+    table.insert(data.stacks, { cliId = "dest-stack", assignedChanges = {}, branches = {
+        { cliId = "upper", name = "pushed-upper", branchStatus = branch_status, commits = {} },
+        { cliId = "dest", name = "destination", branchStatus = branch_status, commits = {} },
+    } })
+    return data
+end
+for _, route in { "palette", "toolbar" } do
+    local state, cx = init("board", 80, 24, 1)
+    workspace.event(state, if route == "palette" then { ev = "action", act = "redo" }
+        else { ev = "action", act = "do", value = "redo" }, cx)
+    check(state.sheet and state.sheet.danger == true and state.sheet.command == "but redo",
+        route .. ": redo must show a danger confirmation")
+    for _, key in { { name = "enter" }, { name = "paste", text = "y" }, { name = "y", text = "y", shift = true } } do
+        workspace.key(state, key, cx)
+        check(#mutations("redo") == 0 and state.sheet ~= nil, route .. ": redo accepted a non-explicit y")
+    end
+    workspace.key(state, { name = "y", text = "y" }, cx)
+    check(#mutations("redo") == 1 and state.sheet == nil, route .. ": explicit y must run redo once")
+end
+for _, source in { { key = "c-c1", ref = "change1" }, { key = "cf-1:1", ref = "change1:file-1" } } do
+    for _, arrival in { "before-prompt", "before-confirm", "absent", "unpushed", "unread-first", "unread-final" } do
+        local state, cx = init("board", 80, 24, 1)
+        workspace.event(state, { ev = "action", act = "pick", value = source.key }, cx)
+        workspace.event(state, { ev = "action", act = "drop", value = "newmove:" }, cx)
+        check(state.sheet and state.sheet.kind == "prompt", source.key .. ": new move must ask for a branch name")
+        if arrival == "before-prompt" then fixture = with_destination("nothingToPush") end
+        if arrival == "unpushed" then fixture = with_destination("completelyUnpushed") end
+        if arrival == "unread-first" then fixture = {} end
+        workspace.key(state, { name = "paste", text = "destination" }, cx)
+        workspace.key(state, { name = "enter" }, cx)
+        local initial_danger = arrival == "before-prompt" or arrival == "unread-first"
+        check(state.sheet and state.sheet.kind == "confirm" and state.sheet.danger == initial_danger,
+            source.key .. " " .. arrival .. ": incorrect initial push guard")
+        if arrival == "before-confirm" then fixture = with_destination("nothingToPush") end
+        if arrival == "unread-final" then fixture = {} end
+        workspace.key(state, { name = "enter" }, cx)
+        local danger = initial_danger or arrival == "before-confirm" or arrival == "unread-final"
+        if danger then
+            check(state.sheet and state.sheet.danger == true and #mutations("move") == 0,
+                source.key .. " " .. arrival .. ": Enter must not rewrite pushed or unreadable destinations")
+            if arrival == "before-prompt" or arrival == "before-confirm" then
+                local body = table.concat(state.sheet.body, "\n")
+                check(string.find(body, "destination", 1, true) and string.find(body, "pushed-upper", 1, true),
+                    source.key .. ": the warning must name the destination and its pushed descendant")
+            else
+                fixture = status(1)
+            end
+            workspace.key(state, { name = "y", text = "y" }, cx)
+        end
+        local writes = mutations("move")
+        check(#writes == 1 and writes[1][5] == source.ref and writes[1][6] == "-b"
+            and writes[1][7] == "destination" and writes[1][8] == "--json",
+            source.key .. " " .. arrival .. ": the authorized move must keep its source and destination")
+    end
+end
 local function resize(state, cx, cols, rows)
     cx.cols, cx.rows = cols, rows
     if workspace.resize then workspace.resize(state, cols, rows, cx) end
@@ -129,7 +201,7 @@ local function last_target(main)
     local key
     visit(main, function(node)
         local p = node.p or {}
-        if p.actions and p.actions.click then key = p.key end
+        if p.key and p.actions and p.actions.click then key = p.key end
     end)
     return key
 end
@@ -154,6 +226,8 @@ do
         end
     end)
     check(notified, "committing an empty workspace must show its notice")
+    check(#cx.toasts == 1 and cx.toasts[1].tone == "info" and cx.toasts[1].text == "Nothing to commit.",
+        "committing an empty workspace must report its outcome with a toast")
     check(state.cursor == "c-c5" and positions(after.main)["c-c5"] ~= nil,
         "the Nothing to commit notice hid the selected fifth commit")
     workspace.key(state, { name = "enter" }, cx)

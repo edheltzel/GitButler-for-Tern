@@ -1562,7 +1562,7 @@ end
 -- Re-reads status immediately before the push decision. The mutation still
 -- uses the captured changeId / branch name / zz: path, not a new selection.
 -- The bump drops an older refresh. Escape cancellation lives in `read`.
-local function fresh_labels(state: State, names: { string }, ids: { string }, above: boolean, use: ({ string }, boolean) -> ())
+local function fresh_labels(state: State, names: { string }, ids: { string }, above: boolean, use: ({ string }, boolean) -> (), creating: string?)
 	state.reads += 1
 	read(state, "Checking push state…", { "status", "-f", "--json" }, function(data: any)
 		local model = gb.model(data)
@@ -1570,13 +1570,14 @@ local function fresh_labels(state: State, names: { string }, ids: { string }, ab
 			use({}, true)
 			return
 		end
-		use(pushed_labels(model, names, ids, above), false)
+		local targets = if creating ~= nil and name_applied(model, creating) then append(names, { creating }) else names
+		use(pushed_labels(model, targets, ids, above), false)
 	end)
 end
 
 -- Unpushed: run `go`. Pushed, missing, or unreadable: danger confirm, then `go`.
 -- `rename` checks only that branch; other rewrites also check branches stacked above.
-local function guard_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, rename: boolean, go: () -> ())
+local function guard_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, rename: boolean, go: () -> (), creating: string?)
 	fresh_labels(state, names, ids, not rename, function(labels: { string }, unread: boolean)
 		local line = warn_line(labels, unread, rename)
 		if line == nil then
@@ -1586,25 +1587,25 @@ local function guard_rewrite(state: State, title: string, body: { string }, name
 		local shown = table.clone(body)
 		table.insert(shown, line)
 		confirm(state, title, shown, args, true, go)
-	end)
+	end, creating)
 end
 
 -- Confirm a rewrite. Danger comes from a fresh status read, not the model
 -- frozen while the picker was open. Enter on a non-danger confirm re-reads
 -- again before mutating, so a push during the sheet cannot slip through.
-local function confirm_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, go: () -> ())
+local function confirm_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, go: () -> (), creating: string?)
 	fresh_labels(state, names, ids, true, function(labels: { string }, unread: boolean)
 		local line = warn_line(labels, unread, false)
 		if line == nil then
 			confirm(state, title, body, args, false, function()
-				guard_rewrite(state, title, body, names, ids, args, false, go)
+				guard_rewrite(state, title, body, names, ids, args, false, go, creating)
 			end)
 			return
 		end
 		local shown = table.clone(body)
 		table.insert(shown, line)
 		confirm(state, title, shown, args, true, go)
-	end)
+	end, creating)
 end
 
 
@@ -1787,12 +1788,7 @@ local function action_move(state: State, target: string?)
 	end
 	to_branch(state, target, "Move " .. what .. " to", false, function(branch: string)
 		local args = { "move", arg, "-b", branch }
-		-- a name typed for a new branch that isn't applied gets created by the
-		-- move; checking it would read as "missing, so pushed"
-		local names: { string } = {}
-		if target ~= NEW_BRANCH or (state.model ~= nil and name_applied(state.model, branch)) then
-			table.insert(names, branch)
-		end
+		local names: { string } = if target == NEW_BRANCH then {} else { branch }
 		if source ~= "" then
 			table.insert(names, source)
 		end
@@ -1802,7 +1798,7 @@ local function action_move(state: State, target: string?)
 			fresh_move(state, row, function()
 				mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " to " .. branch)
 			end)
-		end)
+		end, if target == NEW_BRANCH then branch else nil)
 	end)
 end
 
@@ -1977,7 +1973,7 @@ local function action_discard(state: State, card: boolean?)
 end
 
 local function action_redo(state: State)
-	confirm(state, "Redo the last undo", { "Re-applies the operation the last but undo reverted." }, { "redo" }, false, function()
+	confirm(state, "Redo the last undo", { "Re-applies the operation the last but undo reverted." }, { "redo" }, true, function()
 		mutate(state, "Redoing…", { "redo" }, MUTATE_TIMEOUT_MS, "Redone")
 	end)
 end
