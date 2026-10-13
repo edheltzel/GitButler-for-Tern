@@ -13,6 +13,7 @@ bootstrap = "local sources = {\n" + "\n".join(
 checks = r'''
 local blocks, modules, fixture = {}, {}, nil
 local processes = {}
+local snapshots, status_queue = {}, {}
 local pane = 0
 local root = "/fixture"
 local ui = {}
@@ -38,7 +39,9 @@ local tern = {
     },
     pane = { list = function() return { { pane = pane } } end },
     process = { run = function(argv, _, done)
+        if argv[4] == "status" and #status_queue > 0 then fixture = table.remove(status_queue, 1) end
         table.insert(processes, table.clone(argv))
+        snapshots[#processes] = fixture
         done({ stdout = "{}", stderr = "", status = 0 })
     end },
     json = { decode = function() return fixture end, encode = function(data) return tostring(data) end },
@@ -76,6 +79,8 @@ local function init(view, cols, rows, count)
     pane += 1
     fixture = status(count)
     table.clear(processes)
+    table.clear(snapshots)
+    table.clear(status_queue)
     local cx = { pane = pane, cwd = root, cols = cols, rows = rows, opened = nil, toasts = {} }
     function cx:render() end
     function cx:open(url) self.opened = url end
@@ -137,9 +142,12 @@ local function mutations(command)
 end
 local function with_destination(branch_status)
     local data = status(1)
+    local target = status(1).stacks[1].branches[1].commits[1]
+    target.cliId, target.commitId, target.changeId = "target", "target-sha", "destination-change"
+    for fi, file in target.changes do file.cliId = "target:" .. fi end
     table.insert(data.stacks, { cliId = "dest-stack", assignedChanges = {}, branches = {
         { cliId = "upper", name = "pushed-upper", branchStatus = branch_status, commits = {} },
-        { cliId = "dest", name = "destination", branchStatus = branch_status, commits = {} },
+        { cliId = "dest", name = "destination", branchStatus = branch_status, commits = { target } },
     } })
     return data
 end
@@ -173,6 +181,11 @@ for _, source in { { key = "c-c1", ref = "change1" }, { key = "cf-1:1", ref = "c
         if arrival == "before-confirm" then fixture = with_destination("nothingToPush") end
         if arrival == "unread-final" then fixture = {} end
         workspace.key(state, { name = "enter" }, cx)
+        if arrival == "unread-final" then
+            check(state.sheet == nil and #mutations("move") == 0 and state.notice.tone == "error",
+                source.key .. ": an unreadable final status must refuse the move")
+            continue
+        end
         local danger = initial_danger or arrival == "before-confirm" or arrival == "unread-final"
         if danger then
             check(state.sheet and state.sheet.danger == true and #mutations("move") == 0,
@@ -190,6 +203,93 @@ for _, source in { { key = "c-c1", ref = "change1" }, { key = "cf-1:1", ref = "c
         check(#writes == 1 and writes[1][5] == source.ref and writes[1][6] == "-b"
             and writes[1][7] == "destination" and writes[1][8] == "--json",
             source.key .. " " .. arrival .. ": the authorized move must keep its source and destination")
+    end
+end
+for _, source in { "c-c1", "cf-1:1" } do
+    for _, operation in { "move", "newmove", "above" } do
+        if operation == "above" and source ~= "c-c1" then continue end
+        for _, change in { "ordinary", "split-read", "destination-pushed", "source-pushed", "overlap", "unread" } do
+            local state, cx = init("board", 80, 24, 1)
+            local original = if operation == "newmove" then status(1) else with_destination("completelyUnpushed")
+            fixture = original
+            workspace.key(state, { name = "r" }, cx)
+            workspace.event(state, { ev = "action", act = "pick", value = source }, cx)
+            local target = if operation == "above" then "c-target" elseif operation == "move" then "b-dest" else ""
+            workspace.event(state, { ev = "action", act = "drop", value = operation .. ":" .. target }, cx)
+            if operation == "newmove" then
+                workspace.key(state, { name = "paste", text = "destination" }, cx)
+                workspace.key(state, { name = "enter" }, cx)
+            end
+            check(state.sheet and state.sheet.kind == "confirm" and not state.sheet.danger,
+                source .. " " .. operation .. ": unpushed history must start with an ordinary confirm")
+            local final = if operation == "newmove" then status(1) else with_destination("completelyUnpushed")
+            if change == "destination-pushed" then final = with_destination("nothingToPush") end
+            if change == "source-pushed" then final.stacks[1].branches[1].branchStatus = "nothingToPush" end
+            if change == "overlap" then
+                table.insert(final.uncommittedChanges, { cliId = "clash", filePath = "file-1", changeType = "modified" })
+            end
+            if change == "unread" then final = {} end
+            table.insert(status_queue, final)
+            if change == "split-read" then table.insert(status_queue, with_destination("nothingToPush")) end
+            workspace.key(state, { name = "enter" }, cx)
+            local label = source .. " " .. operation .. " " .. change
+            if change == "overlap" or change == "unread" then
+                check(#mutations("move") == 0 and state.sheet == nil and state.notice ~= nil,
+                    label .. ": the final snapshot must refuse an unsafe or unreadable move")
+                continue
+            end
+            if change == "destination-pushed" or change == "source-pushed" then
+                check(#mutations("move") == 0 and state.sheet and state.sheet.danger,
+                    label .. ": the final snapshot must require y for newly pushed history")
+                workspace.key(state, { name = "enter" }, cx)
+                check(#mutations("move") == 0, label .. ": Enter must not authorize the new danger sheet")
+                workspace.key(state, { name = "y", text = "y" }, cx)
+            end
+            check(#mutations("move") == 1 and state.sheet == nil, label .. ": authorized move must run once")
+            if change == "split-read" then
+                for i, argv in processes do
+                    if argv[4] ~= "move" then continue end
+                    local safe = true
+                    for _, stack in snapshots[i].stacks do
+                        for _, branch in stack.branches do safe = safe and branch.branchStatus == "completelyUnpushed" end
+                    end
+                    check(safe, label .. ": an extra status read must not bypass push authorization")
+                end
+            end
+        end
+        for _, change in { "unchanged", "overlap", "new-warning" } do
+            local state, cx = init("board", 80, 24, 1)
+            fixture = if operation == "newmove" then status(1) else with_destination("completelyUnpushed")
+            fixture.stacks[1].branches[1].branchStatus = "nothingToPush"
+            workspace.key(state, { name = "r" }, cx)
+            workspace.event(state, { ev = "action", act = "pick", value = source }, cx)
+            local target = if operation == "above" then "c-target" elseif operation == "move" then "b-dest" else ""
+            workspace.event(state, { ev = "action", act = "drop", value = operation .. ":" .. target }, cx)
+            if operation == "newmove" then
+                workspace.key(state, { name = "paste", text = "destination" }, cx)
+                workspace.key(state, { name = "enter" }, cx)
+            end
+            check(state.sheet and state.sheet.danger, source .. " " .. operation .. ": pushed source must require y")
+            local final = if change == "new-warning" then with_destination("nothingToPush")
+                elseif operation == "newmove" then status(1) else with_destination("completelyUnpushed")
+            final.stacks[1].branches[1].branchStatus = "nothingToPush"
+            if change == "overlap" then
+                table.insert(final.uncommittedChanges, { cliId = "clash", filePath = "file-1", changeType = "modified" })
+            end
+            table.insert(status_queue, final)
+            workspace.key(state, { name = "y", text = "y" }, cx)
+            local label = source .. " " .. operation .. " " .. change
+            if change == "overlap" then
+                check(#mutations("move") == 0 and state.sheet == nil, label .. ": y must not bypass fresh overlap checks")
+            else
+                if change == "new-warning" then
+                    check(#mutations("move") == 0 and state.sheet and state.sheet.danger,
+                        label .. ": accepting one warning must not authorize newly pushed branches")
+                    workspace.key(state, { name = "y", text = "y" }, cx)
+                end
+                check(#mutations("move") == 1 and state.sheet == nil, label .. ": unchanged warning must not repeat")
+            end
+        end
     end
 end
 local function resize(state, cx, cols, rows)

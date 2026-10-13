@@ -1559,15 +1559,47 @@ local function warn_line(labels: { string }, unread: boolean, rename: boolean): 
 	return force_line(labels, rename)
 end
 
+-- `but` 0.22.3: a `move` that fails with "Uncommitted files would be
+-- overwritten by checkout" still drops the commit and those uncommitted
+-- changes, and records no oplog entry (reproduced with the bare CLI). So a
+-- move is refused while an uncommitted file shares a path with the change.
+local function move_blocked(state: State, row: Row): boolean
+	local moved: { [string]: boolean } = {}
+	for _, r in state.rows do
+		if r.kind == "cfile" and r.changeId == row.changeId and r.path and (row.kind == "commit" or r.path == row.path) then
+			moved[r.path] = true
+		end
+	end
+	local clash: { string } = {}
+	for _, r in state.rows do
+		if r.kind == "file" and r.path and moved[r.path] and not table.find(clash, r.path) then
+			table.insert(clash, r.path)
+		end
+	end
+	if #clash == 0 then
+		return false
+	end
+	notify(state, "warning", table.concat(clash, ", ") .. " has uncommitted changes in a file this commit touches. "
+		.. "Commit, absorb or discard them first: but 0.22.3 can lose the commit and those changes if the move fails. Nothing was modified.")
+	return true
+end
+
 -- Re-reads status immediately before the push decision. The mutation still
 -- uses the captured changeId / branch name / zz: path, not a new selection.
 -- The bump drops an older refresh. Escape cancellation lives in `read`.
-local function fresh_labels(state: State, names: { string }, ids: { string }, above: boolean, use: ({ string }, boolean) -> (), creating: string?)
+local function fresh_labels(state: State, names: { string }, ids: { string }, above: boolean, use: ({ string }, boolean) -> (), creating: string?, moving: Row?)
 	state.reads += 1
 	read(state, "Checking push state…", { "status", "-f", "--json" }, function(data: any)
-		local model = gb.model(data)
+		local model = if moving then apply_status(state, data) else gb.model(data)
 		if model == nil then
-			use({}, true)
+			if moving then
+				notify(state, "error", "but status printed something other than a workspace. Nothing was modified.")
+			else
+				use({}, true)
+			end
+			return
+		end
+		if moving and move_blocked(state, moving) then
 			return
 		end
 		local targets = if creating ~= nil and name_applied(model, creating) then append(names, { creating }) else names
@@ -1577,34 +1609,46 @@ end
 
 -- Unpushed: run `go`. Pushed, missing, or unreadable: danger confirm, then `go`.
 -- `rename` checks only that branch; other rewrites also check branches stacked above.
-local function guard_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, rename: boolean, go: () -> (), creating: string?)
+local function guard_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, rename: boolean, go: () -> (), creating: string?, moving: Row?, accepted: string?)
 	fresh_labels(state, names, ids, not rename, function(labels: { string }, unread: boolean)
 		local line = warn_line(labels, unread, rename)
-		if line == nil then
+		if line == nil or line == accepted then
 			go()
 			return
 		end
 		local shown = table.clone(body)
 		table.insert(shown, line)
-		confirm(state, title, shown, args, true, go)
-	end, creating)
+		confirm(state, title, shown, args, true, function()
+			if moving then
+				guard_rewrite(state, title, body, names, ids, args, rename, go, creating, moving, line)
+			else
+				go()
+			end
+		end)
+	end, creating, moving)
 end
 
 -- Confirm a rewrite. Danger comes from a fresh status read, not the model
 -- frozen while the picker was open. Enter on a non-danger confirm re-reads
 -- again before mutating, so a push during the sheet cannot slip through.
-local function confirm_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, go: () -> (), creating: string?)
+local function confirm_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, go: () -> (), creating: string?, moving: Row?)
 	fresh_labels(state, names, ids, true, function(labels: { string }, unread: boolean)
 		local line = warn_line(labels, unread, false)
 		if line == nil then
 			confirm(state, title, body, args, false, function()
-				guard_rewrite(state, title, body, names, ids, args, false, go, creating)
+				guard_rewrite(state, title, body, names, ids, args, false, go, creating, moving)
 			end)
 			return
 		end
 		local shown = table.clone(body)
 		table.insert(shown, line)
-		confirm(state, title, shown, args, true, go)
+		confirm(state, title, shown, args, true, function()
+			if moving then
+				guard_rewrite(state, title, body, names, ids, args, false, go, creating, moving, line)
+			else
+				go()
+			end
+		end)
 	end, creating)
 end
 
@@ -1665,47 +1709,6 @@ local function action_commit(state: State, target: string?)
 	else
 		start(nil, "all uncommitted changes")
 	end
-end
-
--- `but` 0.22.3: a `move` that fails with "Uncommitted files would be
--- overwritten by checkout" still drops the commit and those uncommitted
--- changes, and records no oplog entry (reproduced with the bare CLI). So a
--- move is refused while an uncommitted file shares a path with the change.
-local function move_blocked(state: State, row: Row): boolean
-	local moved: { [string]: boolean } = {}
-	for _, r in state.rows do
-		if r.kind == "cfile" and r.changeId == row.changeId and r.path and (row.kind == "commit" or r.path == row.path) then
-			moved[r.path] = true
-		end
-	end
-	local clash: { string } = {}
-	for _, r in state.rows do
-		if r.kind == "file" and r.path and moved[r.path] and not table.find(clash, r.path) then
-			table.insert(clash, r.path)
-		end
-	end
-	if #clash == 0 then
-		return false
-	end
-	notify(state, "warning", table.concat(clash, ", ") .. " has uncommitted changes in a file this commit touches. "
-		.. "Commit, absorb or discard them first: but 0.22.3 can lose the commit and those changes if the move fails. Nothing was modified.")
-	return true
-end
-
--- The same check on a fresh status read, just before the move runs: polling
--- pauses while a sheet is open, so the cached rows can miss an edit made
--- meanwhile. A failed read refuses the move.
-local function fresh_move(state: State, row: Row, go: () -> ())
-	state.reads += 1
-	read(state, "Checking changes…", { "status", "-f", "--json" }, function(data: any)
-		if apply_status(state, data) == nil then
-			notify(state, "error", "but status printed something other than a workspace. Nothing was modified.")
-			return
-		end
-		if not move_blocked(state, row) then
-			go()
-		end
-	end)
 end
 
 -- The stable ref `but` takes for a commit or committed-file row, or nil and
@@ -1795,10 +1798,8 @@ local function action_move(state: State, target: string?)
 		confirm_rewrite(state, "Move " .. what .. " to " .. branch, {
 			"Rewrites both branches' history" .. (if row.kind == "cfile" then "; the file becomes a new commit on " .. branch .. "." else "."),
 		}, names, { cid :: string }, args, function()
-			fresh_move(state, row, function()
-				mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " to " .. branch)
-			end)
-		end, if target == NEW_BRANCH then branch else nil)
+			mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " to " .. branch)
+		end, if target == NEW_BRANCH then branch else nil, row)
 	end)
 end
 
@@ -1876,10 +1877,8 @@ local function action_place_above(state: State, target: Row)
 	confirm_rewrite(state, "Move " .. what .. " above " .. target.id, {
 		"Reorders history on " .. table.concat(names, " and ") .. ".",
 	}, names, { row.changeId :: string, tid }, args, function()
-		fresh_move(state, row, function()
-			mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " above " .. target.id)
-		end)
-	end)
+		mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " above " .. target.id)
+	end, nil, row)
 end
 
 local function action_uncommit(state: State)
