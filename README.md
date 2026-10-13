@@ -158,6 +158,44 @@ In this tutorial, you:
 
 Every other action, including **GitButler: Pull upstream into applied branches…** and **GitButler: Set up this folder**, has a palette command named `GitButler: …`.
 
+### Your own keys
+
+Every palette command is a Tern action named `plugin.gitbutler.<id>`, so you can bind any of them in Tern's `settings.json`. Your entries win over the defaults above, and `"unbind"` removes a default:
+
+```json
+{
+	"keybinds": {
+		"ctrl+alt+m": "plugin.gitbutler.move",
+		"ctrl+alt+f": "plugin.gitbutler.pull",
+		"cmd+alt+shift+z": "unbind"
+	}
+}
+```
+
+A bound key opens or focuses the workspace block and runs the action on its selection, with the same confirmations as the block's own key.
+
+| Id | Action | Block key |
+|---|---|---|
+| `open` | Open the workspace block | |
+| `commit` | Commit to a branch | c |
+| `move` | Move the selection to a branch | m |
+| `absorb` | Absorb uncommitted changes | A |
+| `reword` | Reword a commit or rename a branch | e |
+| `branch` / `stack` | New parallel / stacked branch | n / N |
+| `apply` / `unapply` | Apply a branch / unapply the selected stack | a / u |
+| `undo` / `redo` | Undo / redo the last operation | z / |
+| `oplog` | Restore from the oplog | O |
+| `push` / `pr` / `land` | Push, open a PR, land the selected branch | p / P / L |
+| `pull` | Pull upstream into applied branches | f |
+| `uncommit` | Uncommit the selected commit or file | |
+| `discard` | Discard the selection | |
+| `view` | Switch the workspace view | v |
+| `help` | Show the workspace keys | ? |
+| `tui` / `gui` | Open `but tui` / the GitButler app | |
+| `setup` | Set up this folder | |
+
+The single-letter keys inside the block are fixed.
+
 ### Getting back from a sheet
 
 Most workspace keys open a sheet at the top of the block. Every sheet has a **Cancel** button (**Close** on help), and Escape closes it. `q` also closes every sheet except a text prompt, where it types a q. A pasted "q", Shift+Q or Ctrl+Q never closes a sheet.

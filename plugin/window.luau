@@ -425,6 +425,7 @@ local ACTIONS = {
 	{ "commit", "GitButler: Commit to a branch…", "cmd+alt+shift+c" },
 	{ "absorb", "GitButler: Absorb uncommitted changes", "cmd+alt+shift+a" },
 	{ "undo", "GitButler: Undo last operation", "cmd+alt+shift+z" },
+	{ "redo", "GitButler: Redo last undone operation", nil },
 	{ "oplog", "GitButler: Restore from oplog…", nil },
 	{ "move", "GitButler: Move selection to a branch…", nil },
 	{ "reword", "GitButler: Reword commit / rename branch…", nil },
@@ -437,6 +438,9 @@ local ACTIONS = {
 	{ "land", "GitButler: Land selected branch…", nil },
 	{ "view", "GitButler: Switch workspace view", nil },
 	{ "pull", "GitButler: Pull upstream into applied branches…", nil },
+	{ "uncommit", "GitButler: Uncommit selected commit or file…", nil },
+	{ "discard", "GitButler: Discard selection…", nil },
+	{ "help", "GitButler: Show workspace keys", nil },
 }
 
 local function send_action(cx: WindowCx, pane: number, act: string)
