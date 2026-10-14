@@ -315,6 +315,7 @@ tern.command({
 	id = "tui",
 	title = "GitButler: Open TUI",
 	icon = "git-branch",
+	keys = { "cmd+alt+shift+t" },
 	run = function(cx: WindowCx)
 		local root = focused_root(cx)
 		local over = cx.session:focused()
@@ -350,6 +351,7 @@ tern.command({
 	id = "gui",
 	title = "GitButler: Open GUI",
 	icon = "git-branch",
+	keys = { "cmd+alt+shift+w" },
 	run = function(cx: WindowCx)
 		local root = focused_root(cx)
 		if root == nil then
@@ -379,6 +381,7 @@ tern.command({
 	id = "setup",
 	title = "GitButler: Set up this folder",
 	icon = "git-branch",
+	keys = { "cmd+alt+shift+j" },
 	run = function(cx: WindowCx)
 		local cwd = focused_cwd(cx)
 		if cwd == nil or cwd == "" then
@@ -424,22 +427,22 @@ local ACTIONS = {
 	{ "commit", "GitButler: Commit to a branch…", "cmd+alt+shift+c" },
 	{ "absorb", "GitButler: Absorb uncommitted changes", "cmd+alt+shift+a" },
 	{ "undo", "GitButler: Undo last operation", "cmd+alt+shift+z" },
-	{ "redo", "GitButler: Redo last undone operation", nil },
-	{ "oplog", "GitButler: Restore from oplog…", nil },
-	{ "move", "GitButler: Move selection to a branch…", nil },
-	{ "reword", "GitButler: Reword commit / rename branch…", nil },
-	{ "branch", "GitButler: New parallel branch…", nil },
-	{ "stack", "GitButler: New stacked branch…", nil },
-	{ "apply", "GitButler: Apply a branch…", nil },
-	{ "unapply", "GitButler: Unapply selected stack…", nil },
+	{ "redo", "GitButler: Redo last undone operation", "cmd+alt+shift+y" },
+	{ "oplog", "GitButler: Restore from oplog…", "cmd+alt+shift+o" },
+	{ "move", "GitButler: Move selection to a branch…", "cmd+alt+shift+m" },
+	{ "reword", "GitButler: Reword commit / rename branch…", "cmd+alt+shift+e" },
+	{ "branch", "GitButler: New parallel branch…", "cmd+alt+shift+n" },
+	{ "stack", "GitButler: New stacked branch…", "cmd+alt+shift+x" },
+	{ "apply", "GitButler: Apply a branch…", "cmd+alt+shift+i" },
+	{ "unapply", "GitButler: Unapply selected stack…", "cmd+alt+shift+u" },
 	{ "push", "GitButler: Push selected branch…", "cmd+alt+shift+p" },
-	{ "pr", "GitButler: Open pull request…", nil },
-	{ "land", "GitButler: Land selected branch…", nil },
-	{ "view", "GitButler: Switch workspace view", nil },
-	{ "pull", "GitButler: Pull upstream into applied branches…", nil },
-	{ "uncommit", "GitButler: Uncommit selected commit or file…", nil },
-	{ "discard", "GitButler: Discard selection…", nil },
-	{ "help", "GitButler: Show workspace keys", nil },
+	{ "pr", "GitButler: Open pull request…", "cmd+alt+shift+r" },
+	{ "land", "GitButler: Land selected branch…", "cmd+alt+shift+l" },
+	{ "view", "GitButler: Switch workspace view", "cmd+alt+shift+v" },
+	{ "pull", "GitButler: Pull upstream into applied branches…", "cmd+alt+shift+f" },
+	{ "uncommit", "GitButler: Uncommit selected commit or file…", "cmd+alt+shift+k" },
+	{ "discard", "GitButler: Discard selection…", "cmd+alt+shift+d" },
+	{ "help", "GitButler: Show workspace keys", "cmd+alt+shift+h" },
 }
 
 local function send_action(cx: WindowCx, pane: number, act: string)
