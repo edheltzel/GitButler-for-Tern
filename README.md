@@ -14,7 +14,7 @@
 
 GitButler for Tern is a [Tern](https://docs.stencil.so/tern/index.html) plugin that brings [GitButler](https://gitbutler.com) workspaces into your terminal. It adds a status bar segment, a workspace panel with one lane per branch stack, view tabs, sync status chips and diffs in place, native rendering for `but status`, `but diff`, `but show` and `but oplog`, and palette commands for setting up a folder, pulling upstream, and opening `but tui` or the GitButler app. Every change it makes runs through the `but` CLI, so it never writes with raw git.
 
-![A shell beside the GitButler for Tern workspace block: sync chips and view tabs on top, then an Uncommitted lane and a branch stack](docs/images/workspace.png)
+![A shell beside the GitButler for Tern workspace block: the 1 upstream commit and 1 unpushed branch chips, the view tabs, an Uncommitted lane, the response-cache stack and the selected file's details](docs/images/workspace.png)
 
 *Screenshots on this page come from a small demo repository with two stacks (`response-cache` and `units-flag`), so they show more than the tutorial's single file.*
 
@@ -26,7 +26,7 @@ In this tutorial, we will install the plugin, set up a practice folder, and use 
 
 You need:
 
-- macOS with [Tern](https://docs.stencil.so/tern/index.html) (tested with 0.6.1)
+- macOS with [Tern](https://docs.stencil.so/tern/index.html) (tested with 0.8.3)
 - The GitButler CLI, `but` (tested with 0.22.3). Run `but --version` to check.
 - Tern's status bar turned on. Add `"status_bar": true` to `~/Library/Application Support/Tern/settings.json`, then quit and reopen Tern. The setting doesn't apply to a running Tern.
 
@@ -44,7 +44,7 @@ tern plugin list
 You should see:
 
 ```
-gitbutler 0.1.0 GitButler — 2 blocks, 4 lenses, window  ready
+gitbutler 0.1.0 GitButler — 1 blocks, 4 lenses, window  ready
 ```
 
 `ready` means Tern loaded both halves of the plugin. Link the `plugin/` folder, not the repository root.
@@ -91,9 +91,9 @@ Click back into the workspace block if you closed the diff. Select `b.txt`, pres
 
 A sheet opens at the top of the block. Choose **New branch…** and press **⏎**, type `first-branch` and press **⏎**, then type the commit message `add b.txt` and press **⏎**.
 
-![The commit sheet listing the existing branches and New branch…](docs/images/commit.png)
+![The commit sheet: Commit src/cache.js to, listing the existing branches and New branch…](docs/images/commit.png)
 
-You should see a new lane titled `first-branch`, with the branch marked `unpushed`, one commit `add b.txt`, and the file under it. The **Uncommitted** lane now reads `No uncommitted changes.`, and the bottom line says **Committed 1 file to first-branch**.
+You should see a new lane titled `first-branch`, with the branch marked **Unpushed branch**, one commit `add b.txt`, and the file under it. The **Uncommitted** lane now reads `No uncommitted changes.`, the chip at the top reads **1 unpushed branch**, and the bottom line says **Committed 1 file to first-branch**.
 
 To confirm from the shell, run:
 
@@ -139,9 +139,11 @@ In this tutorial, you:
   - Every change still asks first, and anything that rewrites pushed history or deletes work asks for **y**.
 
   ![The board view: the toolbar, the Uncommitted column with checkboxes, a column per stack, and drop buttons on the branches and commits](docs/images/board.png)
-- **f** pulls: it checks the target branch (for example `origin/main`), says `Already up to date` when there is nothing new, and otherwise shows the new commit count and predicted branch or uncommitted-file conflicts. Press **y** to check again; a changed plan requires another confirmation before pulling. Pulling rebases every applied branch onto the target. The result reports actual branch and unresolved file conflicts, or warns when the result or worktree status could not be verified; **z** undoes the pull. When the target is ahead, the bottom line reads `N behind upstream`.
+- **f** pulls, and so does a click on the upstream chip: it checks the target branch (for example `origin/main`), says `Already up to date` when there is nothing new, and otherwise shows the new commit count and predicted branch or uncommitted-file conflicts. Press **y** to check again; a changed plan requires another confirmation before pulling. Pulling rebases every applied branch onto the target. The result reports actual branch and unresolved file conflicts, or warns when the result or worktree status could not be verified; **z** undoes the pull. When the target is ahead, the chip reads **N upstream commits**; after a pull it turns green and reads **Up to date**.
+
+  ![The Pull origin/main sheet: 1 new commit on origin/main, what pulling does, and the but pull command](docs/images/pull.png)
 - **L** lands a branch with `but land --yes`, which updates the target branch directly without a pull request. Skip it in repositories where work must land through a PR.
-- Open the command palette and run **GitButler: Open TUI** to open GitButler's terminal UI in a floating pane over your shell. Running it again focuses that workspace's live TUI instead of opening another. Run **GitButler: Open GUI** to open the desktop app on the same workspace.
+- Press **⌥⇧⌘T**, or run **GitButler: Open TUI** from the palette, to open GitButler's terminal UI in a floating pane over your shell; **q** closes it. Running it again focuses that workspace's live TUI instead of opening another. Run **GitButler: Open GUI** to open the desktop app on the same workspace.
 
   ![but tui in a floating pane over the shell, beside the workspace block](docs/images/but-tui.png)
 - Run **GitButler: Set up this folder** in an existing git repository to start using GitButler there. It refuses your home folder and `/`.
