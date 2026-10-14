@@ -10,7 +10,7 @@ Dated status check-ins for the project: what is done, active, blocked and next.
 
 ## Local Contracts
 
-- Append-only once pushed: add a new dated file; never edit or delete a published one.
+- Keep only the latest check-in; replace older files when a new one is written.
 - The repo is public: write summaries only. No raw task-list lines, no local file paths, no no-mistakes run ids or agent session ids, no personal data. Name a task by what it is and its status.
 - Each file compares against the previous one (what changed, decisions still open).
 
