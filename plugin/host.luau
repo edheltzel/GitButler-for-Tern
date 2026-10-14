@@ -82,6 +82,7 @@ type DiffState = {
 	changes: { gb.Change }?,
 	problem: string?,
 	gen: number, -- reloads started before this are dropped
+	key: string?, -- the workspace row it shows; the diff closes when that row is gone
 }
 
 local running: { [number]: State } = {}
@@ -319,6 +320,7 @@ local function open_diff(state: State)
 		changes = nil,
 		problem = nil,
 		gen = 0,
+		key = row.key,
 	}
 	state.diff = d
 	load_diff(d)
@@ -3207,6 +3209,16 @@ tern.block.define("workspace", {
 		local main: { Node } = { top_bar(state, model) }
 		local sheet = sheet_view(state)
 		local diff = state.diff
+		if diff and diff.key then
+			local found = false
+			for _, r in state.rows do
+				found = found or r.key == diff.key
+			end
+			if not found then
+				-- the shown file or commit is gone (committed, moved, rewritten)
+				state.diff, diff = nil, nil
+			end
+		end
 		if sheet then
 			table.insert(main, sheet)
 		elseif diff then
@@ -3259,11 +3271,13 @@ tern.block.define("workspace", {
 				state.diff = nil
 			elseif k == "r" then
 				load_diff(state.diff :: DiffState)
+				refresh(state)
 			elseif k == "v" then
 				cycle_view(state)
 			else
-				-- arrows and the rest scroll the diff; action keys still work
-				return if string.len(k) == 1 then run_action(state, k) else false
+				-- arrows and the rest scroll the diff; actions wait for the list,
+				-- where the cursor they act on is visible
+				return false
 			end
 			return true
 		end
@@ -3365,8 +3379,9 @@ tern.block.define("workspace", {
 			return
 		end
 		if ev.ev == "action" and type(ev.act) == "string" and NAMED[ev.act] then
-			-- From the palette: start the action on the current selection.
+			-- From the palette: back to the list, so the selection it acts on shows.
 			if state.sheet == nil then
+				state.diff = nil
 				run_action(state, NAMED[ev.act])
 			end
 			return

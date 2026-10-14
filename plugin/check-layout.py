@@ -379,6 +379,19 @@ do
     end)
     check(count and commits, "a tall branch detail lost its commit summary")
 end
+do
+    -- A diff stays bound to its row: keys under it never act on the hidden
+    -- cursor, and it closes when a refresh removes the row it shows.
+    local state, cx = init("lanes", 78, 40, 5)
+    workspace.event(state, { ev = "action", act = "open", value = "c-c5" }, cx)
+    check(state.diff ~= nil and state.diff.key == "c-c5", "the diff must open on the fifth commit")
+    check(workspace.key(state, { name = "p", text = "p" }, cx) == false and state.sheet == nil,
+        "a key under the diff started an action on the hidden cursor")
+    fixture = status(3)
+    workspace.key(state, { name = "r", text = "r" }, cx)
+    workspace.view(state, cx)
+    check(state.diff == nil, "the diff outlived the commit it showed")
+end
 for i = 1, math.min(12, #failures) do print(failures[i]) end
 for i = math.max(13, #failures - 5), #failures do print(failures[i]) end
 assert(#failures == 0, #failures .. " of " .. cases .. " layout assertions failed")
