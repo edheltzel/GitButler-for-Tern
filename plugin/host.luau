@@ -2767,7 +2767,7 @@ local function board_view(state: State, model: gb.Model): Node
 	-- Columns wrap (CSS) about every 34 cells and wrapped rows share the height.
 	local per_line = math.max(1, state.cx.cols // 34)
 	local col_lines = math.ceil((#state.lanes + 1) / per_line)
-	local room = math.max(3, fit_lines((list_px(state) - BOARD_TOOLS) / col_lines - COL_CHROME))
+	local room = fit_lines((list_px(state) - BOARD_TOOLS) / col_lines - COL_CHROME)
 	local function column(lane: number, head: { Node }, rows: { Row }, empty: string): Node
 		local kids: { Node } = { el("bp-colh", head) }
 		local lo, hi, up, down = window(rows, state.cursor, room)
