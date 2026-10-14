@@ -74,13 +74,17 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
 
 - Shipping goes through no-mistakes on top of GitButler, one PR per ship (see GitButler section).
 - GitButler's push remote is `origin` except while shipping to `main`.
+- `but tui` opens as picture-in-picture and `q` closes it; keep that.
+- Keep every `GitButler: …` palette command: the plugin serves many users, not one workflow.
+- Default chords only for open (⌥⇧⌘G) and the TUI (⌥⇧⌘T); everything else ships unbound (`plugin/AGENTS.md`).
+- One workspace panel: views switch in place (tabs, keys) and diffs show inside it; sync state uses GitButler's own words in colored chips.
 
 ## Child DOX Index
 
 - `plugin/AGENTS.md`: the Tern package: file ownership, architecture boundaries (budgets, `but`-only writes, half separation), Luau coding standards, verification commands
 - `regroup/AGENTS.md`: dated status check-ins, append-only
 
-Owned here (no child doc): `DESIGN.md` (surfaces, JSON fields relied on, action → command map, findings), `README.md` (user tutorial), `docs/images/` (README screenshots: `tern ctl … shot NAME` in the isolated Tern against a demo repo, copied from `/tmp/ttc/target/shots/tern/live/`; keep them outside `plugin/` so they never reload Tern). Retake a screenshot when the UI it shows changes. `todo.txt` / `done.txt` at the root: the project's task list (tuxedo, tag `+gitbutler-for-tern`), git-ignored so it stays local. It is the source of truth: `~/todo.txt` routes to it (`@route @mirror`) and a local watcher copies its open tasks there, so edit tasks here, never in the global copy.
+Owned here (no child doc): `DESIGN.md` (surfaces, JSON fields relied on, action → command map, findings), `README.md` (user tutorial), `docs/images/` (README screenshots: `tern ctl … shot NAME` in the isolated Tern against a demo repo, copied from `/tmp/ttc/target/shots/tern/live/`; keep them outside `plugin/` so they never reload Tern). Retake a screenshot when the UI it shows changes. `.codegraph/`: the codegraph index; only its `.gitignore` is tracked, the database stays local. `todo.txt` / `done.txt` at the root: the project's task list (tuxedo, tag `+gitbutler-for-tern`), git-ignored so it stays local. It is the source of truth: `~/todo.txt` routes to it (`@route @mirror`) and a local watcher copies its open tasks there, so edit tasks here, never in the global copy.
 
 ## References
 
