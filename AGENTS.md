@@ -54,7 +54,7 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
 - The status bar is off unless `"status_bar": true` is in `settings.json`, and the setting takes effect only after Tern restarts.
 - fish may pre-fill the prompt (`$EDITOR`): send `ctrl+u` before `tern run <pane> <command>`.
 - ⏎ shows the diff inside the workspace block; Esc returns to the view, so keys sent to the workspace pane act on whichever is showing.
-- Pane sizes in the isolated window (Tern 0.8.3): only a pane created right after a fresh test daemon starts gets its real size; panes opened later, the workspace block included, report 80×24 and `tern ctl size` never updates them. The block then budgets for 80×24, so for screenshots size the window to match first (`tern ctl … size 1280 520` gives a shell plus a 78×26 block), and restart the test daemon (`pkill -f 'daemon --socket /tmp/ttc/daemon.sock'`) when sizes look stuck. Floated panes (`but tui`) don't appear in `shot`.
+- Pane sizes in the isolated window (Tern 0.8.3): `tern ls` sizes only update when the test daemon restarts, so set the window size first, then restart the daemon (`pkill -f 'daemon --socket /tmp/ttc/daemon.sock'`; the window starts a new one) and open the workspace block right away. Measured recipe for a tall, narrow block: `tern ctl … size 800 1400`, restart the daemon, open the block (it splits at about 47×81), then `size 1600 1400` gives a 99×81 block. `size 1280 520` without a restart leaves the block at 78×26. To test layout limits, measure with `tern ctl … dump <selector>` (rects are [x, y, w, h]) against `.sf-main`; in this window text lines are 16px, so cells × 17 overstates the pane. Floated panes (`but tui`) don't appear in `shot`.
 
 ## Gotchas
 
