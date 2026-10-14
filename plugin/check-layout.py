@@ -392,6 +392,60 @@ do
     workspace.view(state, cx)
     check(state.diff == nil, "the diff outlived the commit it showed")
 end
+do
+    -- A long message weighs more than seven files, but the detail caps body
+    -- lines at 4 and file lines at 7, so the seven-file commit is taller.
+    -- Narrow panes stack that detail under the list; it has to fit in what
+    -- the list left (pane minus the two-row top bar, the dock, and the 32px
+    -- of pads that sit outside the list).
+    local function one(id, message, nfiles)
+        local files = {}
+        for fi = 1, nfiles do
+            table.insert(files, { cliId = id .. ":" .. fi, filePath = "f-" .. id .. "-" .. fi, changeType = "modified" })
+        end
+        return { cliId = id, commitId = "sha" .. id, changeId = "change" .. id, message = message, changes = files }
+    end
+    local commits = {
+        one("x", "title x\n" .. string.rep("line\n", 30), 1),
+        one("y", "seven files\n\none body line", 7),
+    }
+    for i = 1, 20 do
+        table.insert(commits, one("f" .. i, "filler " .. i, 1))
+    end
+    local fx = {
+        uncommittedChanges = {},
+        stacks = { { cliId = "s1", assignedChanges = {}, branches = {
+            { cliId = "b1", name = "feature", branchStatus = "completelyUnpushed", commits = commits },
+        } } },
+    }
+    local overflow = nil
+    for _, view in { "lanes", "graph" } do
+        local state, cx = init(view, 78, 50, 1)
+        fixture = fx
+        workspace.key(state, { name = "r" }, cx)
+        for _, row in state.rows do
+            if view == "graph" and (row.kind == "cfile" or row.kind == "branch") then continue end
+            workspace.event(state, { ev = "action", act = "pick", value = row.key }, cx)
+            local result = workspace.view(state, cx)
+            local dock = 0
+            visit(result.dock, function(node)
+                if node.k ~= "text" then return end
+                local text = ""
+                for _, span in node.p.spans do text ..= span.t end
+                for line in string.gmatch(text .. "\n", "(.-)\n") do
+                    dock += math.max(1, math.ceil(width.cells(line) / (cx.cols - 12))) * 17
+                end
+            end)
+            local split = result.main.c[2]
+            local left, detail = height(split.c[1]), height(split.c[2])
+            local room = cx.rows * 17 - 56 - 32 - dock
+            if left + detail > room and overflow == nil then
+                overflow = view .. " " .. row.key .. ": detail " .. detail .. "px exceeds the " .. (room - left) .. "px the list left"
+            end
+        end
+    end
+    check(overflow == nil, overflow or "capped detail fits under the list")
+end
 for i = 1, math.min(12, #failures) do print(failures[i]) end
 for i = math.max(13, #failures - 5), #failures do print(failures[i]) end
 assert(#failures == 0, #failures .. " of " .. cases .. " layout assertions failed")

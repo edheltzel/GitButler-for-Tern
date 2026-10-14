@@ -734,32 +734,61 @@ local function detail_pane(state: State, model: gb.Model, assigned: { [string]: 
 	return el("bp-detail", kids), budget, px
 end
 
--- Height a narrow pane keeps under the list for the detail: the tallest
--- detail of the rows most likely to need the most room (a file, the commit
--- with the most files and body lines, the branch with the most commits).
--- It depends on the workspace, not the selection, so picking a row never
--- moves the rows under the pointer.
+-- Height a narrow pane keeps under the list so every selectable row's
+-- detail fits. Same kind and the same capped body and file lines draw the
+-- same detail, so each shape is measured once. It depends on the workspace,
+-- not the selection, so picking a row never moves the rows under the pointer.
 local function detail_reserve(state: State, model: gb.Model, assigned: { [string]: string }): number
-	local best: { [string]: Row } = {}
-	local weight: { [string]: number } = {}
+	local commits: { [string]: gb.Commit } = {}
+	local branches: { [string]: gb.Branch } = {}
+	for _, stack in model.stacks do
+		for _, b in stack.branches do
+			branches[key_of("b", b.id)] = b
+			for _, c in b.commits do
+				commits[key_of("c", c.id)] = c
+			end
+		end
+	end
+	local function body_lines(message: string): number
+		local body = string.match(message, "^[^\n]*\n+(.+)$")
+		if body == nil then
+			return 0
+		end
+		local n = 0
+		for _ in string.gmatch(body .. "\n", "(.-)\n") do
+			n += 1
+			if n == 4 then
+				return 4
+			end
+		end
+		return n
+	end
+	local seen: { [string]: boolean } = {}
+	local picks: { Row } = {}
+	local function take(row: Row, shape: string)
+		if seen[shape] then
+			return
+		end
+		seen[shape] = true
+		table.insert(picks, row)
+	end
 	for _, r in state.rows do
-		local w = 0
 		if r.kind == "commit" then
-			local c = commit_of_row(model, r)
+			local c = commits[r.key]
 			if c then
-				local _, lines = string.gsub(c.message, "\n", "\n")
-				w = #c.files + lines
+				take(r, "c" .. body_lines(c.message) .. "x" .. math.min(#c.files, 7))
+			else
+				take(r, "c?" .. r.key)
 			end
 		elseif r.kind == "branch" then
-			local b = branch_of_row(model, r)
-			w = if b then #b.commits else 0
-		end
-		if best[r.kind] == nil or w > weight[r.kind] then
-			best[r.kind], weight[r.kind] = r, w
+			local b = if r.bkey then branches[r.bkey] else nil
+			take(r, "b" .. (if b then math.min(#b.commits, 7) else 0))
+		else
+			take(r, r.kind)
 		end
 	end
 	local most = 0
-	for _, r in best do
+	for _, r in picks do
 		local _, _, used = detail_pane(state, model, assigned, r)
 		most = math.max(most, used)
 	end
