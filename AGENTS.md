@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Butler Pane (https://github.com/edheltzel/Butler-Pane): a Tern plugin (Luau) that teaches Tern about GitButler: a status segment, a workspace block, a diff block, command lenses, and actions, all driven by the `but` CLI. Design and findings: `DESIGN.md`. User guide: `README.md`. The plugin id stays `gitbutler`, so command ids remain `plugin.gitbutler.*`; its display name in Tern (`plugin.toml` `name`, the palette group and `tern plugin list`) is `GitButler`.
+Butler Pane (https://github.com/edheltzel/Butler-Pane): a Tern plugin (Luau) that teaches Tern about GitButler: a status segment, a workspace block (view tabs, sync chips, diffs in place), command lenses, and actions, all driven by the `but` CLI. Design and findings: `DESIGN.md`. User guide: `README.md`. The plugin id stays `gitbutler`, so command ids remain `plugin.gitbutler.*`; its display name in Tern (`plugin.toml` `name`, the palette group and `tern plugin list`) is `GitButler`.
 
 ## DOX
 
@@ -52,7 +52,7 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
 - Lenses only appear in shells spawned after the plugin loaded (they need the spawn env) and with Tern's shell integration. `tern new tab` from the CLI starts the login shell (bash here), which shows plain output; test lenses in a tab Tern opens with its configured shell (fish).
 - The status bar is off unless `"status_bar": true` is in `settings.json`, and the setting takes effect only after Tern restarts.
 - fish may pre-fill the prompt (`$EDITOR`): send `ctrl+u` before `tern run <pane> <command>`.
-- After ⏎ opens a diff, focus returns to the workspace block, so keys sent to the workspace pane never reach the diff.
+- ⏎ shows the diff inside the workspace block; Esc returns to the view, so keys sent to the workspace pane act on whichever is showing.
 
 ## Gotchas
 
@@ -62,7 +62,7 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
 - A plugin reload does not emit `window_start`/`focus`. Window state is re-bootstrapped with `tern.timer(0, …)`.
 - `but` 0.22.3 cannot assign an uncommitted file to a branch without committing it (`rub` is retired). See `DESIGN.md`.
 - `but` 0.22.3 `move` can lose work: when it fails with "Uncommitted files would be overwritten by checkout" it still drops the commit and the dependent uncommitted change, with no oplog entry. Recover with `but resolve <path>` then `but oplog restore <sha>`. See `DESIGN.md` finding 6.
-- One slow plugin load (over 50 ms, e.g. two Terns reloading on the same save) makes Tern disable the plugin's window half until the next reload: palette commands, global keys, `gitbutler://diff` links and the status segment stop working. `tern plugin reload` brings them back.
+- One slow plugin load (over 50 ms, e.g. two Terns reloading on the same save) makes Tern disable the plugin's window half until the next reload: palette commands, global keys and the status segment stop working. `tern plugin reload` brings them back.
 - CLI ids (`nk`, `ymn`, `zn:n`) are snapshot-local. Don't hold them across a refresh for a later mutation.
 - `but tui` and `but gui` are real commands; the plugin opens `but tui` in a floated pane and `but gui` as the desktop app. Tern picks a float's size; the plugin API can't set it.
 - `but` 0.22.3 has no `but init`. `but setup --init` creates the git repo (empty commit) when there is none, then sets GitButler up; the plugin's "Set up this folder" command runs it.

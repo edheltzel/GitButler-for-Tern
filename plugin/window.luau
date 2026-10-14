@@ -5,7 +5,6 @@
 local gb = require("./gb")
 
 local WORKSPACE = "gitbutler.workspace"
-local DIFF = "gitbutler.diff"
 local OPEN = "plugin.gitbutler.open"
 local POLL_MS = 30 * 1000
 local STALE_MS = 3 * 1000
@@ -518,58 +517,4 @@ tern.on("focus", function(ev: FocusEvent, cx: WindowCx)
 end)
 tern.on("pane_closed", function(ev: PaneEvent, _cx: WindowCx)
 	warned[ev.pane] = nil
-end)
-
--- `gitbutler://diff?root=…&id=…&label=…`, opened by the workspace block.
-local function unescape(s: string): string
-	return (string.gsub(s, "%%(%x%x)", function(h: string): string
-		return string.char(tonumber(h, 16) :: number)
-	end))
-end
-
-local function query(url: string): { [string]: string }
-	local out: { [string]: string } = {}
-	local q = string.match(url, "%?(.*)$") or ""
-	for k, v in string.gmatch(q, "([^&=]+)=([^&]*)") do
-		out[k] = unescape(v)
-	end
-	return out
-end
-
-tern.route.link(function(link: LinkRequest, cx: WindowCx): RouteDecision?
-	if string.sub(link.url, 1, 16) ~= "gitbutler://diff" then
-		return nil
-	end
-	local q = query(link.url)
-	if q.root == nil or q.id == nil then
-		return { handled = true }
-	end
-	local args = { q.root, q.id, q.label or q.id }
-	-- One diff pane per tab, replaced in place (split it, close the old
-	-- one); focus stays where the link came from so the workspace keeps
-	-- the keys.
-	local from = link.pane or cx.session:focused()
-	local tab = if from then cx.session:tab_of(from) else nil
-	local old: number? = nil
-	for _, pane in cx.session:panes() do
-		if pane.block == DIFF and tab and cx.session:tab_of(pane.pane) == tab then
-			old = pane.pane
-			break
-		end
-	end
-	local opened: number? = nil
-	if old then
-		opened = cx.layout:split(old, "down", { block = DIFF, args = args })
-		if opened then
-			cx.layout:close(old)
-		end
-	else
-		opened = cx:new_block(DIFF, args, "beside")
-	end
-	if opened == nil then
-		cx:toast("error", "GitButler diff block is not loaded on this host")
-	elseif from then
-		cx.layout:focus(from)
-	end
-	return { handled = true }
 end)

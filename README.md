@@ -12,9 +12,9 @@
 > [!NOTE]
 > GitButler workspaces in Tern panes. Source: [github.com/edheltzel/gitbutler-for-tern](https://github.com/edheltzel/gitbutler-for-tern)
 
-GitButler for Tern is a [Tern](https://docs.stencil.so/tern/index.html) plugin that brings [GitButler](https://gitbutler.com) workspaces into your terminal. It adds a status bar segment, a workspace block with one lane per branch stack, a diff block, native rendering for `but status`, `but diff`, `but show` and `but oplog`, and palette commands for setting up a folder, pulling upstream, and opening `but tui` or the GitButler app. Every change it makes runs through the `but` CLI, so it never writes with raw git.
+GitButler for Tern is a [Tern](https://docs.stencil.so/tern/index.html) plugin that brings [GitButler](https://gitbutler.com) workspaces into your terminal. It adds a status bar segment, a workspace panel with one lane per branch stack, view tabs, sync status chips and diffs in place, native rendering for `but status`, `but diff`, `but show` and `but oplog`, and palette commands for setting up a folder, pulling upstream, and opening `but tui` or the GitButler app. Every change it makes runs through the `but` CLI, so it never writes with raw git.
 
-![A shell beside the GitButler for Tern workspace block, showing an Uncommitted lane and two branch stacks](docs/images/workspace.png)
+![A shell beside the GitButler for Tern workspace block: sync chips and view tabs on top, then an Uncommitted lane and a branch stack](docs/images/workspace.png)
 
 *Screenshots on this page come from a small demo repository with two stacks (`response-cache` and `units-flag`), so they show more than the tutorial's single file.*
 
@@ -75,15 +75,15 @@ echo hello > b.txt
 
 Now press **⌥⇧⌘G**, or click the status segment.
 
-You should see the **GitButler** workspace block open beside your shell. Its first lane, **Uncommitted 1**, lists `b.txt` with an `A` (added) marker and `unassigned` on the right. The line at the bottom shows `0 stacks · 0 branches · 1 uncommitted` and when the block last refreshed. The block refreshes itself every 5 seconds, and **r** refreshes it right away.
+You should see the **GitButler** workspace block open beside your shell. Its top bar has a tab for each view and colored chips with the sync state in GitButler's own words: **Up to date** or **N upstream commits**, and **Nothing to push** or **N unpushed branches**. Its first lane, **Uncommitted 1**, lists `b.txt` with an `A` (added) marker and `unassigned` on the right. The line at the bottom shows `0 stacks · 0 branches · 1 uncommitted` and when the block last refreshed. The block refreshes itself every 5 seconds, and **r** refreshes it right away.
 
 ### Step 4: Read the diff
 
 Use **↑** and **↓** to select `b.txt`, then press **⏎**.
 
-You should see a **GitButler diff** block open beside the workspace, showing the new line `+hello`. Focus stays in the workspace block, so you can keep moving with **↑** and **↓** and press **⏎** on another row; the diff block shows each new selection. To close it, click the diff block and press **q**.
+You should see the diff open inside the workspace block, in place of the lanes, showing the new line `+hello`. Press **Esc**, or click **← Back**, to return to the lanes, then press **⏎** on another row to see its diff.
 
-![The diff block beside the workspace, showing changes to src/api.js](docs/images/diff.png)
+![The diff inside the workspace block, under its tabs and sync chips](docs/images/diff.png)
 
 ### Step 5: Commit to a new branch
 
@@ -130,7 +130,8 @@ In this tutorial, you:
 ### Next steps
 
 - Press **?** in the workspace block for every key: **m** moves a file or commit to another branch, **A** absorbs changes into the commits they belong to, **e** rewords a commit or renames a branch, **n** / **N** make a parallel or stacked branch, **a** / **u** apply or unapply branches, and **p** / **P** push a branch or open a pull request.
-- Press **v** in the workspace block to switch views: **lanes** (the default: an Uncommitted card plus a card per stack with its branches, commits and files on a colored line), **graph** (a commit graph with a lane per stack), **stacks** (one column per stack, like the GitButler app), **branches** (a branch list with the selected branch's commits, or the selected lane's uncommitted files) and **board** (below). Click a row to select it or double-click to open its diff. In **lanes** and **graph**, details sit beside the list, or under it in a narrow pane. These previews show the selected file's change and assignment, a commit's ids, message and files, or a branch's base and newest commits as space allows; short panes omit fields and shorten lists. Enlarge the pane to see more details, or press **⏎** for the full diff. Every key works the same in each view, and the block remembers your choice. Long labels clip to fit; `↑ N more` / `↓ N more` mark hidden rows you can reach with the arrow keys. In the branches view, the commit-count badge reports commits not shown, and `+N files` beside a commit counts its hidden files.
+- Click a tab at the top of the workspace block, or press **1**-**5** (**v** cycles), to switch views: **lanes** (the default: an Uncommitted card plus a card per stack with its branches, commits and files on a colored line), **graph** (a commit graph with a lane per stack), **stacks** (one column per stack, like the GitButler app), **branches** (a branch list with the selected branch's commits, or the selected lane's uncommitted files) and **board** (below). Click a row to select it or double-click to show its diff in the panel; **Esc** goes back. In **lanes** and **graph**, details sit beside the list, or under it in a narrow pane. These previews show the selected file's change and assignment, a commit's ids, message and files, or a branch's base and newest commits as space allows; short panes omit fields and shorten lists. Enlarge the pane to see more details, or press **⏎** for the full diff in the panel. Every key works the same in each view, and the block remembers your choice. Long labels clip to fit; `↑ N more` / `↓ N more` mark hidden rows you can reach with the arrow keys. In the branches view, the commit-count badge reports commits not shown, and `+N files` beside a commit counts its hidden files.
+- The chips beside the tabs say where you stand, in GitButler's words: **Up to date** (green) or **N upstream commits** (amber), **Nothing to push** or **N unpushed branches**, plus **N diverged** (red: a pushed branch whose history changed, so its next push is a force push), **Conflicted**, and what is running while a command works. Click the upstream chip to pull. Each branch carries the GitButler desktop app's label: **Unpushed branch**, **Some unpushed**, **Nothing to push**, **Diverged** or **Integrated**.
 - The **board** view works like the GitButler desktop app, with the mouse. Tern blocks can't drag, so you click what you want to move, then click where it goes:
   - Click a file, or tick the boxes of several, and the branches show **Commit here**, each commit shows **Amend**, and the New branch column offers **Commit to a new branch**.
   - Click a commit and other commits show **Squash** and **Above** (reorder), branches show **Move here**, and the Uncommitted column shows **Uncommit**. A committed file can **Move in** to another commit.

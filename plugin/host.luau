@@ -70,6 +70,18 @@ type State = {
 	busy: string?, -- what the running mutation is doing
 	notice: { tone: string, text: string }?,
 	view: string, -- "lanes" | "graph" | "stacks" | "branches" | "board"
+	diff: DiffState?, -- the diff shown in place of the view (⏎), until Esc
+}
+
+-- `but diff <id> --json` for one file, commit or branch, shown in the panel.
+type DiffState = {
+	cx: BlockCx,
+	root: string,
+	id: string,
+	label: string,
+	changes: { gb.Change }?,
+	problem: string?,
+	gen: number, -- reloads started before this are dropped
 }
 
 local running: { [number]: State } = {}
@@ -85,6 +97,66 @@ local function pane_alive(pane: number): boolean
 		end
 	end
 	return false
+end
+
+local MAX_DIFF_LINES = 5000
+
+local function load_diff(d: DiffState)
+	d.gen += 1
+	local gen = d.gen
+	local err = gb.run(d.root, { "diff", d.id, "--json" }, READ_TIMEOUT_MS, function(r: gb.Result)
+		if not pane_alive(d.cx.pane) or gen ~= d.gen then
+			return
+		end
+		local changes = if r.ok then gb.changes(r.data) else nil
+		if changes then
+			d.changes, d.problem = changes, nil
+		else
+			d.problem = r.err or "but diff printed something other than a diff"
+		end
+		d.cx:render()
+	end)
+	if err then
+		d.problem = err
+	end
+end
+
+local function diff_nodes(d: DiffState): { Node }
+	if d.changes == nil then
+		return { if d.problem then ui.code(d.problem) else ui.progress(nil, "Reading the diff…") }
+	end
+	local nodes: { Node } = {}
+	if d.problem then
+		table.insert(nodes, ui.text({ ui.span("Reload failed. The patch below is stale.", "warning") }))
+		table.insert(nodes, ui.code(d.problem))
+	end
+	local budget = MAX_DIFF_LINES
+	for i, c in d.changes :: { gb.Change } do
+		local head = { ui.span(c.path, "strong"), ui.span("  " .. c.status, "muted") }
+		local body: Node
+		local text = c.text
+		if text == nil then
+			body = ui.text({ ui.span("No text diff (binary or too large).", "muted") })
+		else
+			local _, lines = string.gsub(text, "\n", "\n")
+			if budget <= 0 then
+				body = ui.overflow(lines)
+			else
+				budget -= lines
+				body = ui.diff(text, c.path)
+			end
+		end
+		local section = ui.section(head, { body })
+		local p: { [string]: any } = section.p or {}
+		p.key = "c" .. i
+		p.collapsible = true
+		section.p = p
+		table.insert(nodes, section)
+	end
+	if #(d.changes :: { gb.Change }) == 0 then
+		table.insert(nodes, ui.text({ ui.span("No changes.", "muted") }))
+	end
+	return nodes
 end
 
 -- This run is still the block's current one, and the pane still exists.
@@ -233,20 +305,23 @@ local function poll(state: State)
 	end)
 end
 
-local function escape(s: string): string
-	return (string.gsub(s, "[^%w%-%._~/]", function(c: string): string
-		return string.format("%%%02X", string.byte(c))
-	end))
-end
-
--- Opens the diff of a row in the diff block, through the window's link route.
-local function open_diff(state: State, cx: BlockCx)
+-- Shows the selected row's diff in place of the view; Esc goes back.
+local function open_diff(state: State)
 	local row = selected(state)
 	if row == nil then
 		return
 	end
-	local label = if row.kind == "commit" then row.id .. " " .. row.label else row.label
-	cx:open(string.format("gitbutler://diff?root=%s&id=%s&label=%s", escape(state.root), escape(row.id), escape(label)))
+	local d: DiffState = {
+		cx = state.cx,
+		root = state.root,
+		id = row.id,
+		label = if row.kind == "commit" then row.id .. " " .. row.label else row.label,
+		changes = nil,
+		problem = nil,
+		gen = 0,
+	}
+	state.diff = d
+	load_diff(d)
 end
 
 -- Branch names each uncommitted path is assigned to.
@@ -272,8 +347,9 @@ local HEAD = LH + 12
 local BODY = 10
 local PADS = BODY + 12 + 4 + 16 -- body, main padding, dock gap, block gap
 local GAP = 6 -- .bp-lanes gap between lane cards
+local TOP = 28 -- one .bp-top row: 20px tab buttons or status chips, plus the 8px gap under it
 
-local KEYS_HELP = "↑↓ move  ←→ lanes  ⏎ diff  space mark  c commit  m move  A absorb  e reword  n/N branch  a/u apply/unapply  z undo  O oplog  p push  P PR  L land  f pull  v view  ? help"
+local KEYS_HELP = "↑↓ move  ←→ lanes  ⏎ diff  space mark  c commit  m move  A absorb  e reword  n/N branch  a/u apply/unapply  z undo  O oplog  p push  P PR  L land  f pull  v/1-5 view  ? help"
 
 local PICK_FOOT = "↑↓ choose  ⏎ ok  1-9 pick  q/esc cancel"
 
@@ -288,7 +364,8 @@ local function wrapped(state: State, text: string): number
 	return n
 end
 
--- The dock's first row: counts, upstream lag and refresh state, as (text, tone).
+-- The dock's first row: counts and refresh state, as (text, tone). Upstream
+-- and push state are the chips at the top of the panel.
 local function status_parts(state: State): { { string } }
 	local parts: { { string } } = {}
 	local model = state.model
@@ -298,9 +375,6 @@ local function status_parts(state: State): { { string } }
 			branches += #s.branches
 		end
 		table.insert(parts, { string.format("%d stacks · %d branches · %d uncommitted", #model.stacks, branches, #model.unassigned), "strong" })
-		if model.behind > 0 then
-			table.insert(parts, { string.format("  %d behind upstream", model.behind), "warning" })
-		end
 	end
 	if state.busy then
 		table.insert(parts, { "  " .. state.busy, "accent" })
@@ -331,9 +405,67 @@ local function fit_lines(px: number): number
 	return math.max(1, math.floor(px / ROW))
 end
 
--- Pane height minus one card head, pads and the dock.
+-- The sync state as chips, { text, tone, click action? }, in GitButler's own
+-- words: `N upstream commits` (the desktop header) or `Up to date` (`but
+-- pull`), both pulling on click, which re-checks the target first; then what
+-- there is to push, from the desktop's branch labels.
+local function sync_chips(state: State, model: gb.Model): { { string } }
+	local out: { { string } } = {}
+	local conflicted, unpushed, diverged = false, 0, 0
+	for _, s in model.stacks do
+		for _, b in s.branches do
+			if b.status == "unpushedCommitsRequiringForce" then
+				diverged += 1
+			elseif b.status == "completelyUnpushed" or b.status == "unpushedCommits" then
+				unpushed += 1
+			end
+			for _, c in b.commits do
+				conflicted = conflicted or c.conflicted
+			end
+		end
+	end
+	if state.busy then
+		table.insert(out, { state.busy, "busy" })
+	end
+	if conflicted then
+		table.insert(out, { "Conflicted", "bad" })
+	end
+	if model.behind > 0 then
+		table.insert(out, { string.format("%d upstream %s", model.behind, if model.behind == 1 then "commit" else "commits"), "warn", "do=f" })
+	else
+		table.insert(out, { "Up to date", "ok", "do=f" })
+	end
+	if diverged > 0 then
+		table.insert(out, { diverged .. " diverged", "bad" })
+	end
+	if unpushed > 0 then
+		table.insert(out, { string.format("%d unpushed %s", unpushed, if unpushed == 1 then "branch" else "branches"), "warn" })
+	elseif diverged == 0 then
+		table.insert(out, { "Nothing to push", "ok" })
+	end
+	return out
+end
+
+-- Cells the five tabs take ("1 Lanes" … "5 Board", 2 cells of padding and a
+-- 1-cell gap each); the chips add their text plus 3 cells each.
+local TAB_CELLS = 54
+
+-- The top bar is one row when tabs and chips fit the pane, else two.
+local function top_rows(state: State): number
+	local model = state.model
+	if model == nil then
+		return 1
+	end
+	local cells = TAB_CELLS
+	for _, c in sync_chips(state, model) do
+		cells += width.cells(c[1]) + 3
+	end
+	return if cells <= state.cx.cols - 12 then 1 else 2
+end
+
+-- Pane height minus the top bar, one card head, pads and the dock.
 local function list_px(state: State): number
-	return state.cx.rows * LH - HEAD - PADS - dock_px(state)
+	return state.cx.rows * LH - top_rows(state) * TOP - HEAD - PADS - dock_px(state)
 end
 
 -- Picker: the same conversion, minus the key row above the list (the 20px
@@ -1144,13 +1276,47 @@ local function settle_cursor(state: State)
 	end
 end
 
-local function cycle_view(state: State)
-	local at = table.find(VIEWS, state.view) or 1
-	state.view = VIEWS[at % #VIEWS + 1]
-	tern.kv.set("view", state.view)
+local VIEW_NAMES: { [string]: string } = { lanes = "Lanes", graph = "Graph", stacks = "Stacks", branches = "Branches", board = "Board" }
+
+-- Shows `view` (closing a diff), remembered for new blocks.
+local function set_view(state: State, view: string)
+	state.view = view
+	state.diff = nil
+	tern.kv.set("view", view)
 	settle_cursor(state)
 	state.viewport = state.cursor
-	state.notice = { tone = "muted", text = "View: " .. state.view .. "  (v to switch)" }
+end
+
+local function cycle_view(state: State)
+	local at = table.find(VIEWS, state.view) or 1
+	set_view(state, VIEWS[at % #VIEWS + 1])
+end
+
+-- The panel's top bar: a tab per view and the sync chips (`sync_chips`),
+-- on one row when they fit, else chips above tabs (`top_rows`).
+local function top_bar(state: State, model: gb.Model): Node
+	local tabs: { Node } = {}
+	for i, v in VIEWS do
+		local on = v == state.view and state.diff == nil
+		table.insert(tabs, ui.el("button", {
+			class = "bp-btn bp-tab" .. (if on then " bp-on" else ""),
+			text = i .. " " .. VIEW_NAMES[v],
+			actions = { click = "view=" .. v },
+		}, {}))
+	end
+	local chips: { Node } = {}
+	for _, c in sync_chips(state, model) do
+		local p: { [string]: any } = { class = "bp-stat bp-stat-" .. c[2], text = c[1] }
+		if c[3] then
+			p.actions = { click = c[3] }
+		end
+		table.insert(chips, ui.el(if c[3] then "button" else "span", p, {}))
+	end
+	local stats, row = el("bp-stats", chips), el("bp-tabs", tabs)
+	if top_rows(state) == 2 then
+		return el("bp-top bp-top2", { stats, row }, { key = "top" })
+	end
+	return el("bp-top", { row, stats }, { key = "top" })
 end
 
 -- Actions. Every write is one `but` command, run in the background; one at
@@ -2524,7 +2690,7 @@ end
 
 local HELP: { { string } } = {
 	{ "↑↓ / j k, ← → / h l", "move; jump between lanes" },
-	{ "⏎", "open the diff of a file, commit or branch" },
+	{ "⏎", "show the diff of a file, commit or branch here; esc goes back" },
 	{ "space", "mark an uncommitted file (c, m act on marks)" },
 	{ "c", "commit marked/selected files (or all) to a branch" },
 	{ "m", "move a file or commit to another branch" },
@@ -2535,7 +2701,7 @@ local HELP: { { string } } = {
 	{ "z / O", "undo the last operation / restore from the oplog" },
 	{ "p / P / L", "push / open a PR for / land the selected branch" },
 	{ "f", "pull: rebase applied branches onto the updated target" },
-	{ "v", "switch view: lanes, graph, stacks, branches, board" },
+	{ "v / 1-5", "switch view: lanes, graph, stacks, branches, board (or click a tab)" },
 	{ "r", "refresh now (it also polls every 5 s)" },
 }
 
@@ -3038,10 +3204,20 @@ tern.block.define("workspace", {
 			end
 			return { main = ui.col({ ui.progress(nil, "Reading the workspace…") }) }
 		end
-		local main: { Node } = {}
+		local main: { Node } = { top_bar(state, model) }
 		local sheet = sheet_view(state)
+		local diff = state.diff
 		if sheet then
 			table.insert(main, sheet)
+		elseif diff then
+			table.insert(main, el("bp-sheet-foot", {
+				ui.el("button", { class = "bp-btn", text = "← Back", actions = { click = "back" } }, {}),
+				sp(diff.label, "bp-t bp-clip"),
+				sp("esc back  r reload", "bp-hint"),
+			}))
+			for _, n in diff_nodes(diff) do
+				table.insert(main, n)
+			end
 		else
 			settle_cursor(state)
 			local budget = list_px(state)
@@ -3073,6 +3249,24 @@ tern.block.define("workspace", {
 			return false
 		end
 		local k = key.text or key.name
+		local n = tonumber(k)
+		if n and VIEWS[n] then
+			set_view(state, VIEWS[n])
+			return true
+		end
+		if state.diff then
+			if key.name == "escape" or key.name == "backspace" or k == "q" then
+				state.diff = nil
+			elseif k == "r" then
+				load_diff(state.diff :: DiffState)
+			elseif k == "v" then
+				cycle_view(state)
+			else
+				-- arrows and the rest scroll the diff; action keys still work
+				return if string.len(k) == 1 then run_action(state, k) else false
+			end
+			return true
+		end
 		if key.name == "down" or k == "j" then
 			step(state, 1)
 		elseif key.name == "up" or k == "k" then
@@ -3088,8 +3282,7 @@ tern.block.define("workspace", {
 		elseif k == "v" then
 			cycle_view(state)
 		elseif key.name == "enter" or k == "o" then
-			open_diff(state, cx)
-			return false
+			open_diff(state)
 		elseif k == "r" then
 			if state.problem and state.model == nil then
 				state.problem = if gb.root(state.root) then nil else state.problem
@@ -3122,8 +3315,17 @@ tern.block.define("workspace", {
 			end
 			return
 		end
+		if ev.ev == "action" and ev.act == "back" then
+			state.diff = nil
+			return
+		end
 		if ev.ev == "action" and ev.act == "view" then
-			cycle_view(state)
+			local v = if type(ev.value) == "string" and table.find(VIEWS, ev.value) then ev.value else nil
+			if v then
+				set_view(state, v)
+			else
+				cycle_view(state)
+			end
 			return
 		end
 		if ev.ev == "action" and (ev.act == "pick" or ev.act == "open") and type(ev.value) == "string" then
@@ -3131,7 +3333,7 @@ tern.block.define("workspace", {
 			if state.sheet == nil then
 				state.cursor = ev.value
 				if ev.act == "open" then
-					open_diff(state, cx)
+					open_diff(state)
 				end
 			end
 			return
@@ -3182,115 +3384,3 @@ tern.block.define("workspace", {
 		end
 	end,
 })
-
--- The diff block: `but diff <id> --json` for one file, commit or branch.
-
-type DiffState = {
-	cx: BlockCx,
-	root: string,
-	id: string,
-	label: string,
-	changes: { gb.Change }?,
-	problem: string?,
-	gen: number, -- reloads started before this are dropped
-}
-
-local MAX_DIFF_LINES = 5000
-
-local function load_diff(state: DiffState)
-	state.gen += 1
-	local gen = state.gen
-	local err = gb.run(state.root, { "diff", state.id, "--json" }, READ_TIMEOUT_MS, function(r: gb.Result)
-		if not pane_alive(state.cx.pane) then
-			return
-		end
-		if gen ~= state.gen then
-			return
-		end
-		local changes = if r.ok then gb.changes(r.data) else nil
-		if changes then
-			state.changes, state.problem = changes, nil
-		else
-			state.problem = r.err or "but diff printed something other than a diff"
-		end
-		state.cx:render()
-	end)
-	if err then
-		state.problem = err
-	end
-end
-
-tern.block.define("diff", {
-	init = function(cx: BlockCx, args: { string }, _saved: any): DiffState
-		local state: DiffState = {
-			cx = cx,
-			root = args[1] or cx.cwd or "",
-			id = args[2] or "",
-			label = args[3] or args[2] or "",
-			changes = nil,
-			problem = nil,
-			gen = 0,
-		}
-		load_diff(state)
-		return state
-	end,
-
-	title = function(state: DiffState): string?
-		return "Diff · " .. state.label
-	end,
-
-	view = function(state: DiffState, _cx: BlockCx): BlockView
-		local dock = ui.col({ ui.text({ ui.span(state.id .. "  ", "mono muted"), ui.span("r reload  q close", "dim") }) })
-		if state.changes == nil then
-			if state.problem then
-				return { main = ui.col({ ui.code(state.problem) }), dock = dock }
-			end
-			return { main = ui.col({ ui.progress(nil, "Reading the diff…") }) }
-		end
-		local nodes: { Node } = {}
-		if state.problem then
-			table.insert(nodes, ui.text({ ui.span("Reload failed. The patch below is stale.", "warning") }))
-			table.insert(nodes, ui.code(state.problem))
-		end
-		local budget = MAX_DIFF_LINES
-		for i, c in state.changes :: { gb.Change } do
-			local head = { ui.span(c.path, "strong"), ui.span("  " .. c.status, "muted") }
-			local body: Node
-			local text = c.text
-			if text == nil then
-				body = ui.text({ ui.span("No text diff (binary or too large).", "muted") })
-			else
-				local _, lines = string.gsub(text, "\n", "\n")
-				if budget <= 0 then
-					body = ui.overflow(lines)
-				else
-					budget -= lines
-					body = ui.diff(text, c.path)
-				end
-			end
-			local section = ui.section(head, { body })
-			local p: { [string]: any } = section.p or {}
-			p.key = "c" .. i
-			p.collapsible = true
-			section.p = p
-			table.insert(nodes, section)
-		end
-		if #(state.changes :: { gb.Change }) == 0 then
-			table.insert(nodes, ui.text({ ui.span("No changes.", "muted") }))
-		end
-		return { main = ui.col(nodes), dock = dock }
-	end,
-
-	key = function(state: DiffState, key: Key, cx: BlockCx): boolean?
-		local k = key.text or key.name
-		if k == "r" then
-			load_diff(state)
-		elseif k == "q" or key.name == "escape" then
-			cx:exit(0)
-		else
-			return false
-		end
-		return true
-	end,
-})
-

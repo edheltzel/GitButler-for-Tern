@@ -14,12 +14,6 @@ title = "GitButler"
 # Opened by "Open GitButler workspace" (palette, status segment, new_git_block).
 palette = false
 
-[[blocks]]
-id = "diff"
-title = "GitButler diff"
-# Opened from the workspace block with a repo root and a `but` CLI id.
-palette = false
-
 # Lenses claim only reads. Exact oplog forms, not `but oplog -*`: that glob
 # also matches writes (`but oplog --json restore`, `but oplog --json snapshot`).
 [[lenses]]

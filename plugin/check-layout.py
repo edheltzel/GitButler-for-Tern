@@ -71,9 +71,9 @@ end
 local function init(view, cols, rows, count)
     pane += 1
     fixture = status(count)
-    local cx = { pane = pane, cwd = root, cols = cols, rows = rows, opened = nil }
+    local cx = { pane = pane, cwd = root, cols = cols, rows = rows }
     function cx:render() end
-    function cx:open(url) self.opened = url end
+    function cx:toast() end
     local state = workspace.init(cx, {}, nil)
     state.view = view
     return state, cx
@@ -87,7 +87,7 @@ local function positions(main)
     local found = {}
     visit(main, function(node, path)
         local p = node.p or {}
-        if p.actions and p.actions.click then found[p.key] = path end
+        if p.actions and p.actions.click and p.key then found[p.key] = path end
     end)
     return found
 end
@@ -134,7 +134,7 @@ local function last_target(main)
     return key
 end
 do
-    local state, cx = init("graph", 78, 30, 12)
+    local state, cx = init("graph", 78, 34, 12) -- 30 rows plus the two-row top bar
     fixture = status(12)
     fixture.uncommittedChanges = {}
     workspace.key(state, { name = "r" }, cx)
@@ -157,7 +157,7 @@ do
     check(state.cursor == "c-c5" and positions(after.main)["c-c5"] ~= nil,
         "the Nothing to commit notice hid the selected fifth commit")
     workspace.key(state, { name = "enter" }, cx)
-    check(string.find(cx.opened, "&id=c5&label=", 1, true) ~= nil,
+    check(state.diff ~= nil and state.diff.id == "c5",
         "the visible fifth commit must remain the action target")
 end
 for _, view in { "lanes", "graph", "stacks", "branches" } do
@@ -197,7 +197,7 @@ do
     end
 end
 do
-    local state, cx = init("graph", 78, 30, 12)
+    local state, cx = init("graph", 78, 34, 12) -- 30 rows plus the two-row top bar
     check(positions(workspace.view(state, cx).main)["c-c4"] ~= nil,
         "the reported fourth commit must be visible before the click")
     workspace.event(state, { ev = "action", act = "pick", value = "c-c4" }, cx)
@@ -295,9 +295,8 @@ for _, view in { "lanes", "graph", "stacks", "branches" } do
             workspace.event(state, { ev = "action", act = "open", value = target }, cx)
             local row
             for _, r in state.rows do if r.key == target then row = r end end
-            local id = string.gsub(row.id, ":", "%%3A")
-            check(cx.opened ~= nil and string.find(cx.opened, "&id=" .. id .. "&label=", 1, true) ~= nil,
-                view .. ": double-click opened the wrong diff")
+            check(state.diff ~= nil and state.diff.id == row.id, view .. ": double-click opened the wrong diff")
+            state.diff = nil
         end
         for _, name in { "end", "home", "right", "down", "up", "left" } do
             workspace.key(state, { name = name }, cx)
@@ -357,7 +356,7 @@ end
 do
     local state, cx = init("lanes", 78, 60, 7)
     workspace.event(state, { ev = "action", act = "pick", value = "c-c1" }, cx)
-    local detail = workspace.view(state, cx).main.c[1].c[2]
+    local detail = workspace.view(state, cx).main.c[2].c[2] -- c[1] is the top bar
     local title, ids, body, files, hint = false, false, false, false, false
     visit(detail, function(node)
         if has_class(node, "bp-dh") then title = node.p.text == "Commit 1" end
@@ -370,7 +369,7 @@ do
     end)
     check(title and ids and body and files and hint, "a tall commit detail lost its ordinary contents")
     workspace.event(state, { ev = "action", act = "pick", value = "b-b1" }, cx)
-    detail = workspace.view(state, cx).main.c[1].c[2]
+    detail = workspace.view(state, cx).main.c[2].c[2]
     local count, commits = false, false
     visit(detail, function(node)
         if has_class(node, "bp-sub") then count = node.p.text == "Commits 7" end
