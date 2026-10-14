@@ -47,12 +47,14 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
   - `tern ls`
   - `tern send <pane> keys enter` / `tern send <pane> text c`
   - `timeout 8 tern ctl --control /tmp/ttc/ctl.sock plugins run plugin.gitbutler.open`
-  - `timeout 8 tern ctl --control /tmp/ttc/ctl.sock shot NAME` (writes `/tmp/ttc/target/shots/tern/live/NAME.png`)
+  - `timeout 8 tern ctl --control /tmp/ttc/ctl.sock shot NAME` (writes `/tmp/ttc/target/shots/tern/live/NAME.png`; the file can land a few seconds after the reply, so wait before reading it)
+  - `tern ctl … key cmd+t` opens a tab with Tern's configured shell (fish), which lenses need
 - Verify each mutation with `but status --json` in `/tmp/gbs/work`.
 - Lenses only appear in shells spawned after the plugin loaded (they need the spawn env) and with Tern's shell integration. `tern new tab` from the CLI starts the login shell (bash here), which shows plain output; test lenses in a tab Tern opens with its configured shell (fish).
 - The status bar is off unless `"status_bar": true` is in `settings.json`, and the setting takes effect only after Tern restarts.
 - fish may pre-fill the prompt (`$EDITOR`): send `ctrl+u` before `tern run <pane> <command>`.
 - ⏎ shows the diff inside the workspace block; Esc returns to the view, so keys sent to the workspace pane act on whichever is showing.
+- Pane sizes in the isolated window (Tern 0.8.3): only a pane created right after a fresh test daemon starts gets its real size; panes opened later, the workspace block included, report 80×24 and `tern ctl size` never updates them. The block then budgets for 80×24, so for screenshots size the window to match first (`tern ctl … size 1280 520` gives a shell plus a 78×26 block), and restart the test daemon (`pkill -f 'daemon --socket /tmp/ttc/daemon.sock'`) when sizes look stuck. Floated panes (`but tui`) don't appear in `shot`.
 
 ## Gotchas
 
