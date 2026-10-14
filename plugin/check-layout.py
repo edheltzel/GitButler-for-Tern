@@ -900,6 +900,52 @@ do
     end
     check(returned and state.cursor == source, "browsing up lost the held commit")
 end
+for _, rows in { 23, 24 } do
+    for _, held in { "commit", "cfile", "file", "marks" } do
+        local state, cx = init("board", 35, rows, 6)
+        if held == "commit" or held == "cfile" then
+            workspace.key(state, { name = "right" }, cx)
+            workspace.key(state, { name = "down" }, cx)
+            if held == "cfile" then workspace.key(state, { name = "down" }, cx) end
+        else
+            if held == "marks" then
+                workspace.event(state, { ev = "change", name = "mark", value = "work.txt", checked = true }, cx)
+            end
+            check(click_text(state, cx, "→"), "short board: the stack must be reachable")
+        end
+        local source, target = state.cursor, row_key(state, "c-c6")
+        local column = node_by_key(workspace.view(state, cx).main, "L2")
+        check(column ~= nil and #column.c - 1 == rows - 22, "short board fixture must leave one or two body lines")
+        local reached = false
+        for _ = 1, #state.rows do
+            local main = workspace.view(state, cx).main
+            check_board(state, cx, true)
+            check(state.cursor == source and (held ~= "marks" or state.marked["work.txt"]),
+                "short board: downward browsing changed the held changes")
+            if positions(main)[target] then reached = true; break end
+            if not click_text(state, cx, "↓", "L2") then break end
+        end
+        check(reached, "short board: hidden destinations have no downward browsing control")
+        local op = if held == "commit" or held == "cfile" then "squash" else "amend"
+        local value = action_value(workspace.view(state, cx).main, "drop=" .. op .. ":", target)
+        check(value ~= nil, "short board: the destination must retain its drop action")
+        workspace.event(state, { ev = "action", act = "drop", value = value }, cx)
+        local expected = if held == "commit" then "but squash change1 -t change6 --use-target-message"
+            elseif held == "cfile" then "but squash change1:file-1 -t change6"
+            else "but amend -t change6 zz:work.txt"
+        check(state.sheet ~= nil and state.sheet.command == expected, "short board: browsing retargeted the drop")
+        workspace.key(state, { name = "escape" }, cx)
+        local returned = false
+        for _ = 1, #state.rows do
+            local main = workspace.view(state, cx).main
+            check_board(state, cx, true)
+            check(state.cursor == source, "short board: upward browsing changed the held changes")
+            if positions(main)[row_key(state, "b-b1")] then returned = true; break end
+            if not click_text(state, cx, "↑", "L2") then break end
+        end
+        check(returned, "short board: interior windows have no upward browsing control")
+    end
+end
 for i = 1, math.min(12, #failures) do print(failures[i]) end
 for i = math.max(13, #failures - 5), #failures do print(failures[i]) end
 assert(#failures == 0, #failures .. " of " .. cases .. " layout assertions failed")

@@ -3076,8 +3076,14 @@ local function board_view(state: State, model: gb.Model): Node
 	local last = math.min(#state.lanes + 1, first + capacity - 1)
 	local room = math.max(0, math.floor(((budget - (col_lines - 1) * 8) / col_lines - COL_CHROME) / ROW))
 	local function column(lane: number, head: { Node }, rows: { Row }, empty: string): Node
-		local kids: { Node } = { el("bp-colh", head) }
 		local lo, hi, up, down = window(rows, state.viewport, room)
+		if room > 0 and hi < #rows and not down then
+			table.insert(head, 1, button("↓", "browse=" .. rows[hi + 1].key))
+		end
+		if room > 0 and lo > 1 and not up then
+			table.insert(head, 1, button("↑", "browse=" .. rows[lo - 1].key))
+		end
+		local kids: { Node } = { el("bp-colh", head) }
 		if up then
 			table.insert(kids, button("↑ " .. (lo - 1) .. " more", "browse=" .. rows[lo - 1].key))
 		end
