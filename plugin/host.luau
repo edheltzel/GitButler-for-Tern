@@ -82,7 +82,7 @@ type DiffState = {
 	changes: { gb.Change }?,
 	problem: string?,
 	gen: number, -- reloads started before this are dropped
-	key: string?, -- the workspace row it shows; the diff closes when that row is gone
+	kind: string,
 }
 
 local running: { [number]: State } = {}
@@ -304,26 +304,6 @@ local function poll(state: State)
 			poll(state)
 		end
 	end)
-end
-
--- Shows the selected row's diff in place of the view; Esc goes back.
-local function open_diff(state: State)
-	local row = selected(state)
-	if row == nil then
-		return
-	end
-	local d: DiffState = {
-		cx = state.cx,
-		root = state.root,
-		id = row.id,
-		label = if row.kind == "commit" then row.id .. " " .. row.label else row.label,
-		changes = nil,
-		problem = nil,
-		gen = 0,
-		key = row.key,
-	}
-	state.diff = d
-	load_diff(d)
 end
 
 -- Branch names each uncommitted path is assigned to.
@@ -1805,7 +1785,7 @@ end
 -- Re-reads status immediately before the push decision. The mutation still
 -- uses the captured changeId / branch name / zz: path, not a new selection.
 -- The bump drops an older refresh. Escape cancellation lives in `read`.
-local function fresh_labels(state: State, names: { string }, ids: { string }, above: boolean, use: ({ string }, boolean) -> ())
+local function fresh_labels(state: State, names: { string }, ids: { string }, above: boolean, use: ({ string }, boolean) -> (), new_branch: string?)
 	state.reads += 1
 	read(state, "Checking push state…", { "status", "-f", "--json" }, function(data: any)
 		local model = gb.model(data)
@@ -1813,13 +1793,17 @@ local function fresh_labels(state: State, names: { string }, ids: { string }, ab
 			use({}, true)
 			return
 		end
-		use(pushed_labels(model, names, ids, above), false)
+		local targets = table.clone(names)
+		if new_branch and name_applied(model, new_branch) then
+			table.insert(targets, new_branch)
+		end
+		use(pushed_labels(model, targets, ids, above), false)
 	end)
 end
 
 -- Unpushed: run `go`. Pushed, missing, or unreadable: danger confirm, then `go`.
 -- `rename` checks only that branch; other rewrites also check branches stacked above.
-local function guard_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, rename: boolean, go: () -> ())
+local function guard_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, rename: boolean, go: () -> (), new_branch: string?)
 	fresh_labels(state, names, ids, not rename, function(labels: { string }, unread: boolean)
 		local line = warn_line(labels, unread, rename)
 		if line == nil then
@@ -1829,25 +1813,25 @@ local function guard_rewrite(state: State, title: string, body: { string }, name
 		local shown = table.clone(body)
 		table.insert(shown, line)
 		confirm(state, title, shown, args, true, go)
-	end)
+	end, new_branch)
 end
 
 -- Confirm a rewrite. Danger comes from a fresh status read, not the model
 -- frozen while the picker was open. Enter on a non-danger confirm re-reads
 -- again before mutating, so a push during the sheet cannot slip through.
-local function confirm_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, go: () -> ())
+local function confirm_rewrite(state: State, title: string, body: { string }, names: { string }, ids: { string }, args: { string }, go: () -> (), new_branch: string?)
 	fresh_labels(state, names, ids, true, function(labels: { string }, unread: boolean)
 		local line = warn_line(labels, unread, false)
 		if line == nil then
 			confirm(state, title, body, args, false, function()
-				guard_rewrite(state, title, body, names, ids, args, false, go)
+				guard_rewrite(state, title, body, names, ids, args, false, go, new_branch)
 			end)
 			return
 		end
 		local shown = table.clone(body)
 		table.insert(shown, line)
 		confirm(state, title, shown, args, true, go)
-	end)
+	end, new_branch)
 end
 
 
@@ -1963,6 +1947,40 @@ local function change_ref(row: Row): (string?, string?)
 	return (if row.kind == "cfile" and row.path then cid .. ":" .. row.path else cid), nil
 end
 
+local function diff_ref(row: Row): string?
+	if row.kind == "branch" then
+		return if row.branch ~= "" then row.branch else nil
+	elseif row.kind == "file" then
+		return if row.path and not string.find(row.path, ":", 1, true) then file_arg(row.path) else nil
+	end
+	local ref = change_ref(row)
+	return ref
+end
+
+local function open_diff(state: State)
+	local row = selected(state)
+	if row == nil then
+		return
+	end
+	local ref = diff_ref(row)
+	if ref == nil then
+		notify(state, "warning", "That row has no safe, stable diff target.")
+		return
+	end
+	local d: DiffState = {
+		cx = state.cx,
+		root = state.root,
+		id = ref,
+		label = if row.kind == "commit" then row.id .. " " .. row.label else row.label,
+		changes = nil,
+		problem = nil,
+		gen = 0,
+		kind = row.kind,
+	}
+	state.diff = d
+	load_diff(d)
+end
+
 local function change_what(row: Row): string
 	return if row.kind == "commit" then "commit " .. row.id .. " " .. row.label else row.label .. " (" .. row.id .. ")"
 end
@@ -2030,10 +2048,8 @@ local function action_move(state: State, target: string?)
 	end
 	to_branch(state, target, "Move " .. what .. " to", false, function(branch: string)
 		local args = { "move", arg, "-b", branch }
-		-- a name typed for a new branch that isn't applied gets created by the
-		-- move; checking it would read as "missing, so pushed"
 		local names: { string } = {}
-		if target ~= NEW_BRANCH or (state.model ~= nil and name_applied(state.model, branch)) then
+		if target ~= NEW_BRANCH then
 			table.insert(names, branch)
 		end
 		if source ~= "" then
@@ -2045,7 +2061,7 @@ local function action_move(state: State, target: string?)
 			fresh_move(state, row, function()
 				mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " to " .. branch)
 			end)
-		end)
+		end, if target == NEW_BRANCH then branch else nil)
 	end)
 end
 
@@ -2219,7 +2235,7 @@ local function action_discard(state: State)
 end
 
 local function action_redo(state: State)
-	confirm(state, "Redo the last undo", { "Re-applies the operation the last but undo reverted." }, { "redo" }, false, function()
+	confirm(state, "Redo the last undo", { "Re-applies the operation the last but undo reverted." }, { "redo" }, true, function()
 		mutate(state, "Redoing…", { "redo" }, MUTATE_TIMEOUT_MS, "Redone")
 	end)
 end
@@ -3013,11 +3029,16 @@ local function board_view(state: State, model: gb.Model): Node
 
 	-- Columns wrap (CSS) about every 34 cells and wrapped rows share the height.
 	local per_line = math.max(1, state.cx.cols // 34)
-	local col_lines = math.ceil((#state.lanes + 1) / per_line)
-	local room = math.max(3, fit_lines((list_px(state) - BOARD_TOOLS) / col_lines - COL_CHROME))
+	local budget = list_px(state) + HEAD + BODY - BOARD_TOOLS
+	local col_lines = math.min(math.ceil((#state.lanes + 1) / per_line), math.max(1, (budget + 8) // (COL_CHROME + 3 * ROW + 8)))
+	local capacity = per_line * col_lines
+	local anchor = state.rows[index_of(state, state.viewport)]
+	local first = math.clamp((if anchor then anchor.lane else 1) - capacity // 2, 1, math.max(1, #state.lanes + 2 - capacity))
+	local last = math.min(#state.lanes + 1, first + capacity - 1)
+	local room = math.max(0, math.floor(((budget - (col_lines - 1) * 8) / col_lines - COL_CHROME) / ROW))
 	local function column(lane: number, head: { Node }, rows: { Row }, empty: string): Node
 		local kids: { Node } = { el("bp-colh", head) }
-		local lo, hi, up, down = window(rows, state.cursor, room)
+		local lo, hi, up, down = window(rows, state.viewport, room)
 		if up then
 			table.insert(kids, sp("↑ " .. (lo - 1) .. " more", "bp-dim"))
 		end
@@ -3039,8 +3060,10 @@ local function board_view(state: State, model: gb.Model): Node
 	if held == "commit" or held == "cfile" then
 		table.insert(uhead, el("bp-end", { drop("Uncommit", "uncommit", "") }))
 	end
-	table.insert(cols, column(1, uhead, unc, "No uncommitted changes."))
-	for lane = 2, #state.lanes do
+	if first == 1 then
+		table.insert(cols, column(1, uhead, unc, "No uncommitted changes."))
+	end
+	for lane = math.max(2, first), math.min(last, #state.lanes) do
 		local stack = model.stacks[lane - 1]
 		local rows: { Row } = {}
 		for _, r in state.lanes[lane] do
@@ -3055,15 +3078,17 @@ local function board_view(state: State, model: gb.Model): Node
 		end
 		table.insert(cols, column(lane, head, rows, "No commits yet."))
 	end
-	local new: { Node } = { el("bp-colh", { sp("New branch", "bp-lh-n") }) }
-	if held == "files" then
-		table.insert(new, drop("Commit to a new branch", "newcommit", ""))
-	elseif held == "commit" or held == "cfile" then
-		table.insert(new, drop("Move to a new branch", "newmove", ""))
-	else
-		table.insert(new, button("+ Create branch", "do=n"))
+	if last > #state.lanes then
+		local new: { Node } = { el("bp-colh", { sp("New branch", "bp-lh-n") }) }
+		if held == "files" then
+			table.insert(new, drop("Commit to a new branch", "newcommit", ""))
+		elseif held == "commit" or held == "cfile" then
+			table.insert(new, drop("Move to a new branch", "newmove", ""))
+		else
+			table.insert(new, button("+ Create branch", "do=n"))
+		end
+		table.insert(cols, el("bp-sc bp-bcol bp-newcol", new, { key = "new" }))
 	end
-	table.insert(cols, el("bp-sc bp-bcol bp-newcol", new, { key = "new" }))
 
 	local tools = el("bp-tools", {
 		button("Commit", "do=c"),
@@ -3176,17 +3201,15 @@ local MENU: { [string]: string } = {
 	["Uncommit"] = "uncommit",
 }
 
--- A board toolbar button or right-click item: selects the card's row (when
--- there is one), then runs the action key or board op on it.
 local function board_do(state: State, k: string, key: string?)
-	if key ~= nil then
-		for _, r in state.rows do
-			if r.key == key then
-				state.cursor = key
-			end
+	for _, r in state.rows do
+		if r.key == key then
+			state.cursor = key
+			run_action(state, k)
+			return
 		end
 	end
-	run_action(state, k)
+	notify(state, "warning", "That menu target is gone: the workspace changed.")
 end
 
 -- A board drop button: `<op>:<target row key>`. What moves is the selection
@@ -3284,10 +3307,10 @@ tern.block.define("workspace", {
 		local main: { Node } = { top_bar(state, model) }
 		local sheet = sheet_view(state)
 		local diff = state.diff
-		if diff and diff.key then
+		if diff then
 			local found = false
 			for _, r in state.rows do
-				found = found or r.key == diff.key
+				found = found or (r.kind == diff.kind and diff_ref(r) == diff.id)
 			end
 			if not found then
 				-- the shown file or commit is gone (committed, moved, rewritten)
@@ -3440,7 +3463,7 @@ tern.block.define("workspace", {
 		end
 		if ev.ev == "action" and ev.act == "do" and type(ev.value) == "string" then
 			if state.sheet == nil then
-				board_do(state, ev.value, nil)
+				run_action(state, ev.value)
 			end
 			return
 		end

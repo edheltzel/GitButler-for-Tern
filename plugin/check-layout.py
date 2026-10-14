@@ -12,6 +12,7 @@ bootstrap = "local sources = {\n" + "\n".join(
 ) + "\n}\n"
 checks = r'''
 local blocks, modules, fixture = {}, {}, nil
+local calls = {}
 local pane = 0
 local root = "/fixture"
 local ui = {}
@@ -24,6 +25,7 @@ function ui.kv(items) return { k = "kv", p = { items = items } } end
 function ui.text(spans) return { k = "text", p = { spans = spans } } end
 function ui.col(kids) return { k = "col", c = kids } end
 function ui.lines(kids) return { k = "col", c = kids } end
+function ui.code(text) return { k = "code", p = { text = text } } end
 local tern = {
     ui = ui,
     block = { define = function(name, definition) blocks[name] = definition end },
@@ -36,7 +38,10 @@ local tern = {
         end,
     },
     pane = { list = function() return { { pane = pane } } end },
-    process = { run = function(_, _, done) done({ stdout = "{}", stderr = "", status = 0 }) end },
+    process = { run = function(argv, _, done)
+        table.insert(calls, table.clone(argv))
+        done({ stdout = "{}", stderr = "", status = 0 })
+    end },
     json = { decode = function() return fixture end, encode = function(data) return tostring(data) end },
     timer = function() return { cancel = function() end } end,
     kv = { get = function() return "lanes" end, set = function() end },
@@ -100,6 +105,11 @@ local function height(node)
     local kids, sum = node.c or {}, 0
     for _, child in kids do sum += height(child) end
     if node.k == "kv" then return #(node.p.items) * 17 + 6 end
+    if has_class(node, "bp-top") then return if has_class(node, "bp-top2") then 58 else 29 end
+    if has_class(node, "bp-colh") then return 23 end
+    if has_class(node, "bp-card") then return 21 end
+    if has_class(node, "bp-bcol") then return sum + 19 + math.max(0, #kids - 1) * 2 end
+    if node.tag == "button" then return 21 end
     if has_class(node, "bp-lanes") then return sum + math.max(0, #kids - 1) * 6 end
     if has_class(node, "bp-lane") then return sum + 9 end
     if has_class(node, "bp-lh") then return 29 end
@@ -124,6 +134,23 @@ local function resize(state, cx, cols, rows)
     cx.cols, cx.rows = cols, rows
     if workspace.resize then workspace.resize(state, cols, rows, cx) end
     return workspace.view(state, cx)
+end
+local function dock_height(result, cx)
+    local dock = 0
+    visit(result.dock, function(node)
+        if node.k ~= "text" then return end
+        local text = ""
+        for _, span in node.p.spans do text ..= span.t end
+        for line in string.gmatch(text .. "\n", "(.-)\n") do
+            dock += math.max(1, math.ceil(width.cells(line) / (cx.cols - 12))) * 17
+        end
+    end)
+    return dock
+end
+local function command_count(op)
+    local count = 0
+    for _, argv in calls do if argv[4] == op then count += 1 end end
+    return count
 end
 local function last_target(main)
     local key
@@ -157,7 +184,7 @@ do
     check(state.cursor == "c-c5" and positions(after.main)["c-c5"] ~= nil,
         "the Nothing to commit notice hid the selected fifth commit")
     workspace.key(state, { name = "enter" }, cx)
-    check(state.diff ~= nil and state.diff.id == "c5",
+    check(state.diff ~= nil and state.diff.id == "change5",
         "the visible fifth commit must remain the action target")
 end
 for _, view in { "lanes", "graph", "stacks", "branches" } do
@@ -295,7 +322,8 @@ for _, view in { "lanes", "graph", "stacks", "branches" } do
             workspace.event(state, { ev = "action", act = "open", value = target }, cx)
             local row
             for _, r in state.rows do if r.key == target then row = r end end
-            check(state.diff ~= nil and state.diff.id == row.id, view .. ": double-click opened the wrong diff")
+            local label = if row.kind == "commit" then row.id .. " " .. row.label else row.label
+            check(state.diff ~= nil and state.diff.label == label, view .. ": double-click opened the wrong diff")
             state.diff = nil
         end
         for _, name in { "end", "home", "right", "down", "up", "left" } do
@@ -313,19 +341,11 @@ for _, view in { "lanes", "graph" } do
                 if view == "graph" and (row.kind == "cfile" or row.kind == "branch") then continue end
                 workspace.event(state, { ev = "action", act = "pick", value = row.key }, cx)
                 local result = workspace.view(state, cx)
-                local dock = 0
-                visit(result.dock, function(node)
-                    if node.k ~= "text" then return end
-                    local text = ""
-                    for _, span in node.p.spans do text ..= span.t end
-                    for line in string.gmatch(text .. "\n", "(.-)\n") do
-                        dock += math.max(1, math.ceil(width.cells(line) / (cols - 12))) * 17
-                    end
-                end)
-                local split = result.main.c[1]
+                local dock = dock_height(result, cx)
+                local split = result.main.c[2]
                 local left, detail = height(split.c[1]), height(split.c[2])
                 local drawn = if cols < 110 then left + detail else math.max(left, detail)
-                local available = rows * 17 - 32 - dock
+                local available = rows * 17 - height(result.main.c[1]) - 32 - dock
                 check(drawn <= available, view .. " " .. cols .. "x" .. rows .. " " .. row.kind
                     .. ": needs " .. drawn .. "px, only " .. available .. "px available")
             end
@@ -384,7 +404,7 @@ do
     -- cursor, and it closes when a refresh removes the row it shows.
     local state, cx = init("lanes", 78, 40, 5)
     workspace.event(state, { ev = "action", act = "open", value = "c-c5" }, cx)
-    check(state.diff ~= nil and state.diff.key == "c-c5", "the diff must open on the fifth commit")
+    check(state.diff ~= nil and state.diff.id == "change5", "the diff must open on the fifth commit")
     check(workspace.key(state, { name = "p", text = "p" }, cx) == false and state.sheet == nil,
         "a key under the diff started an action on the hidden cursor")
     fixture = status(3)
@@ -427,15 +447,7 @@ do
             if view == "graph" and (row.kind == "cfile" or row.kind == "branch") then continue end
             workspace.event(state, { ev = "action", act = "pick", value = row.key }, cx)
             local result = workspace.view(state, cx)
-            local dock = 0
-            visit(result.dock, function(node)
-                if node.k ~= "text" then return end
-                local text = ""
-                for _, span in node.p.spans do text ..= span.t end
-                for line in string.gmatch(text .. "\n", "(.-)\n") do
-                    dock += math.max(1, math.ceil(width.cells(line) / (cx.cols - 12))) * 17
-                end
-            end)
+            local dock = dock_height(result, cx)
             local split = result.main.c[2]
             local left, detail = height(split.c[1]), height(split.c[2])
             local room = cx.rows * 17 - 58 - 32 - dock
@@ -445,6 +457,208 @@ do
         end
     end
     check(overflow == nil, overflow or "capped detail fits under the list")
+end
+do
+    local state, cx = init("board", 78, 40, 2)
+    fixture = status(2)
+    fixture.uncommittedChanges = { { cliId = "u2", filePath = "other.txt", changeType = "modified" } }
+    workspace.key(state, { name = "r" }, cx)
+    local cursor = state.cursor
+    for _, id in { "main.2.cols.L1.f-u1", "malformed", false } do
+        for _, act in { "Commit…", "Move…", "Absorb", "Discard…", "Discard branch…", "Push", "Create PR",
+            "Rename…", "Reword…", "New stacked branch…", "Unapply", "Land", "Uncommit" } do
+            local before = #calls
+            workspace.event(state, { ev = "action", act = act, id = if id then id else nil }, cx)
+            check(state.sheet == nil and #calls == before and state.cursor == cursor,
+                act .. ": a missing menu target fell back to the selection")
+        end
+    end
+    workspace.event(state, { ev = "action", act = "Discard…", id = "main.2.cols.L1.f-u2" }, cx)
+    check(state.sheet ~= nil and state.sheet.command == "but discard zz:other.txt" and state.sheet.danger,
+        "a live menu target must keep its guarded file action")
+    workspace.key(state, { name = "escape" }, cx)
+    workspace.event(state, { ev = "action", act = "do", value = "discard" }, cx)
+    check(state.sheet ~= nil and state.sheet.command == "but discard zz:other.txt",
+        "the toolbar must still act on the selection")
+end
+for _, route in { "toolbar", "palette" } do
+    local state, cx = init("board", 78, 40, 1)
+    local before = command_count("redo")
+    workspace.event(state, { ev = "action", act = if route == "toolbar" then "do" else "redo", value = "redo" }, cx)
+    check(state.sheet ~= nil and state.sheet.danger, route .. ": redo must be dangerous")
+    workspace.key(state, { name = "enter" }, cx)
+    check(state.sheet ~= nil and command_count("redo") == before, route .. ": Enter ran redo")
+    workspace.key(state, { name = "y", text = "y" }, cx)
+    check(state.sheet == nil and command_count("redo") == before + 1, route .. ": y did not run redo")
+end
+for _, kind in { "commit", "cfile" } do
+    for _, timing in { "prompt", "confirm", "absent" } do
+        local state, cx = init("board", 78, 40, 2)
+        local key = if kind == "commit" then "c-c1" else "cf-1:1"
+        workspace.event(state, { ev = "action", act = "pick", value = key }, cx)
+        workspace.event(state, { ev = "action", act = "drop", value = "newmove:" }, cx)
+        check(state.sheet ~= nil and state.sheet.kind == "prompt", kind .. ": new move must ask for a name")
+        workspace.key(state, { name = "paste", text = "destination" }, cx)
+        local function apply_destination()
+            fixture = status(2)
+            table.insert(fixture.stacks, { cliId = "s2", assignedChanges = {}, branches = {
+                { cliId = "above", name = "pushed-above", branchStatus = "nothingToPush", commits = {} },
+                { cliId = "dest", name = "destination", branchStatus = "completelyUnpushed", commits = {} },
+            } })
+        end
+        if timing == "prompt" then apply_destination() end
+        workspace.key(state, { name = "enter" }, cx)
+        local before = command_count("move")
+        if timing == "confirm" then
+            check(state.sheet ~= nil and not state.sheet.danger, kind .. ": a new destination should allow Enter")
+            apply_destination()
+            workspace.key(state, { name = "enter" }, cx)
+        end
+        if timing ~= "absent" then
+            check(state.sheet ~= nil and state.sheet.danger and command_count("move") == before,
+                kind .. ": a destination applied during the " .. timing .. " escaped the danger guard")
+            local warned = false
+            for _, line in (if state.sheet then state.sheet.body or {} else {}) do
+                if string.find(line, "pushed-above", 1, true) then warned = true end
+            end
+            check(warned, kind .. ": the destination's pushed parent was omitted")
+            workspace.key(state, { name = "enter" }, cx)
+            check(command_count("move") == before, kind .. ": Enter accepted a dangerous move")
+            workspace.key(state, { name = "y", text = "y" }, cx)
+        else
+            check(state.sheet ~= nil and not state.sheet.danger, kind .. ": an absent destination was treated as pushed")
+            workspace.key(state, { name = "enter" }, cx)
+        end
+        check(command_count("move") == before + 1, kind .. ": confirmed move did not run")
+        for _, argv in calls do
+            if argv[4] == "move" then
+                check(argv[5] == "change1" or argv[5] == "change1:file-1", "move lost its stable source")
+            end
+        end
+    end
+end
+for _, kind in { "file", "assigned", "commit", "cfile", "branch" } do
+    for _, transition in { "replace", "renumber" } do
+        local state, cx = init("lanes", 78, 40, 2)
+        local function data()
+            local result = status(2)
+            result.stacks[1].assignedChanges = { { cliId = "a1", filePath = "assigned.txt", changeType = "modified" } }
+            return result
+        end
+        fixture = data()
+        workspace.key(state, { name = "r" }, cx)
+        local targets = {
+            file = { "f-u1", "zz:work.txt" }, assigned = { "a-a1", "zz:assigned.txt" },
+            commit = { "c-c1", "change1" }, cfile = { "cf-1:1", "change1:file-1" }, branch = { "b-b1", "feature" },
+        }
+        local target = targets[kind]
+        workspace.event(state, { ev = "action", act = "open", value = target[1] }, cx)
+        check(calls[#calls][4] == "diff" and calls[#calls][5] == target[2], kind .. ": diff used a snapshot selector")
+        fixture = data()
+        local record = if kind == "file" then fixture.uncommittedChanges[1]
+            elseif kind == "assigned" then fixture.stacks[1].assignedChanges[1]
+            elseif kind == "branch" then fixture.stacks[1].branches[1]
+            elseif kind == "commit" then fixture.stacks[1].branches[1].commits[1]
+            else fixture.stacks[1].branches[1].commits[1].changes[1]
+        if transition == "renumber" then record.cliId = "new-cli-id"
+        elseif kind == "branch" then record.name = "replacement"
+        elseif kind == "commit" then record.changeId = "replacement"
+        else record.filePath = "replacement.txt" end
+        workspace.key(state, { name = "r" }, cx)
+        workspace.view(state, cx)
+        if transition == "replace" then
+            check(state.diff == nil, kind .. ": the diff survived CLI id reuse")
+        else
+            check(state.diff ~= nil, kind .. ": CLI id churn closed a surviving diff")
+            workspace.key(state, { name = "r" }, cx)
+            local last
+            for _, argv in calls do if argv[4] == "diff" then last = argv[5] end end
+            check(last == target[2], kind .. ": reload lost the stable diff selector")
+        end
+    end
+end
+do
+    local state, cx = init("lanes", 78, 40, 1)
+    fixture = status(1)
+    fixture.stacks[1].branches[1].name = ""
+    fixture.uncommittedChanges[1].filePath = "ambiguous:path"
+    fixture.stacks[1].branches[1].commits[1].changes[1].filePath = "ambiguous:path"
+    fixture.stacks[1].branches[1].commits[1].changeId = ""
+    workspace.key(state, { name = "r" }, cx)
+    for _, key in { "b-b1", "f-u1", "c-c1", "cf-1:1" } do
+        local before = command_count("diff")
+        workspace.event(state, { ev = "action", act = "open", value = key }, cx)
+        check(state.diff == nil and command_count("diff") == before, "an unsafe diff target reached but: " .. key)
+    end
+end
+local function board_status()
+    local result = status(2)
+    result.stacks = {}
+    for si = 1, 4 do
+        local stack = status(2).stacks[1]
+        stack.cliId = "s" .. si
+        stack.branches[1].cliId, stack.branches[1].name = "b" .. si, "branch-" .. si
+        for ci, commit in stack.branches[1].commits do
+            commit.cliId, commit.changeId = "c" .. si .. "-" .. ci, "change" .. si .. "-" .. ci
+            for fi, file in commit.changes do file.cliId = si .. "-" .. ci .. ":" .. fi end
+        end
+        table.insert(result.stacks, stack)
+    end
+    return result
+end
+local function check_board(state, cx)
+    local result = workspace.view(state, cx)
+    local board = result.main.c[2]
+    local columns = board.c[2].c
+    local per_line = math.max(1, cx.cols // 34)
+    local drawn = 39
+    for i = 1, #columns, per_line do
+        local line = 0
+        for j = i, math.min(#columns, i + per_line - 1) do line = math.max(line, height(columns[j])) end
+        drawn += line + (if i == 1 then 0 else 8)
+    end
+    local available = cx.rows * 17 - height(result.main.c[1]) - 32 - dock_height(result, cx)
+    check(drawn <= available, "board " .. cx.cols .. "x" .. cx.rows .. ": needs " .. drawn .. "px, only " .. available .. "px available")
+    check(positions(result.main)[state.cursor] ~= nil, "board: keyboard cursor is outside the visible columns/cards")
+end
+for _, cols in { 35, 67, 78, 109, 160 } do
+    for _, rows in { 24, 30, 60 } do
+        local state, cx = init("board", cols, rows, 2)
+        fixture = board_status()
+        workspace.key(state, { name = "r" }, cx)
+        for _, key in { "end", "home", "right", "right", "right", "right", "left" } do
+            workspace.key(state, { name = key }, cx)
+            check_board(state, cx)
+        end
+        for _ = 1, #state.rows do
+            workspace.key(state, { name = "down" }, cx)
+            check_board(state, cx)
+        end
+        for _ = 1, #state.rows do
+            workspace.key(state, { name = "up" }, cx)
+            check_board(state, cx)
+        end
+    end
+end
+do
+    local state, cx = init("board", 78, 33, 0)
+    fixture = status(0)
+    fixture.uncommittedChanges = {}
+    for i = 1, 10 do
+        table.insert(fixture.uncommittedChanges, { cliId = "u" .. i, filePath = "work-" .. i, changeType = "modified" })
+    end
+    workspace.key(state, { name = "r" }, cx)
+    workspace.view(state, cx)
+    for _ = 1, 4 do workspace.key(state, { name = "down" }, cx) end
+    local before = positions(workspace.view(state, cx).main)
+    check(before["f-u4"] ~= nil and before["f-u5"] ~= nil and before["f-u6"] ~= nil
+        and before["f-u3"] == nil and before["f-u7"] == nil,
+        "board: the five-line window must show files four through six before the click")
+    workspace.event(state, { ev = "action", act = "pick", value = "f-u6" }, cx)
+    local after = positions(workspace.view(state, cx).main)
+    for key, path in before do check(after[key] == path, "board: pointer selection moved " .. key) end
+    workspace.event(state, { ev = "action", act = "open", value = "f-u6" }, cx)
+    check(state.diff ~= nil and state.diff.id == "zz:work-6", "board: the second click opened another file")
 end
 for i = 1, math.min(12, #failures) do print(failures[i]) end
 for i = math.max(13, #failures - 5), #failures do print(failures[i]) end
