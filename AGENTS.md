@@ -76,8 +76,8 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
 - GitButler's push remote is `origin` except while shipping to `main`.
 - `but tui` opens as picture-in-picture and `q` closes it; keep that.
 - Keep every `GitButler: …` palette command: the plugin serves many users, not one workflow.
-- Default chords only for open (⌥⇧⌘G) and the TUI (⌥⇧⌘T); everything else ships unbound (`plugin/AGENTS.md`).
-- One workspace panel: views switch in place (tabs, keys) and diffs show inside it; sync state uses GitButler's own words in colored chips.
+- Preferred default chords: only open (⌥⇧⌘G) and the TUI (⌥⇧⌘T), with every other action unbound. Currently shipped chords are in [README.md](README.md#keys).
+- Preferred layout: one workspace panel with views switching in place (tabs, keys), diffs inside it, and sync state using GitButler's own words in colored chips. Current surfaces are in [DESIGN.md](DESIGN.md#surfaces).
 
 ## Child DOX Index
 
