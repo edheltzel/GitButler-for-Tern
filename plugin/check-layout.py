@@ -101,7 +101,7 @@ local function height(node)
     for _, child in kids do sum += height(child) end
     if node.k == "kv" then return #(node.p.items) * 17 + 6 end
     if has_class(node, "bp-lanes") then return sum + math.max(0, #kids - 1) * 6 end
-    if has_class(node, "bp-lane") then return sum + 10 end
+    if has_class(node, "bp-lane") then return sum + 9 end
     if has_class(node, "bp-lh") then return 29 end
     if has_class(node, "bp-gh") then return 22 end
     if has_class(node, "bp-r") then return 23 end
@@ -438,7 +438,7 @@ do
             end)
             local split = result.main.c[2]
             local left, detail = height(split.c[1]), height(split.c[2])
-            local room = cx.rows * 17 - 56 - 32 - dock
+            local room = cx.rows * 17 - 58 - 32 - dock
             if left + detail > room and overflow == nil then
                 overflow = view .. " " .. row.key .. ": detail " .. detail .. "px exceeds the " .. (room - left) .. "px the list left"
             end

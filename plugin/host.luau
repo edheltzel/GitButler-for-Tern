@@ -342,14 +342,14 @@ end
 -- scrolls, so the cap is design px (--sf-lh fallback 17), not cells.
 -- Lane card chrome (HEAD, BODY, GAP) matches .bp-lane/.bp-lh/.bp-lanes in
 -- styles.css; the main padding and dock gap are Tern's, a static estimate.
--- 60 cells and 2 dock lines: floor((1020 - 29 - 42 - 34) / 23) = 39.
+-- 60 cells and 2 dock lines: floor((1020 - 29 - 41 - 34) / 23) = 39.
 local LH = 17
 local ROW = LH + 6
 local HEAD = LH + 12
-local BODY = 10
+local BODY = 9 -- .bp-lane padding-bottom 8 + border-bottom 1
 local PADS = BODY + 12 + 4 + 16 -- body, main padding, dock gap, block gap
 local GAP = 6 -- .bp-lanes gap between lane cards
-local TOP = 28 -- one .bp-top row: 20px tab buttons or status chips, plus the 8px gap under it
+local TOP = 29 -- .bp-btn is 21px (1px border + 1px padding + line + 1px padding + 1px border), plus .bp-top's 8px padding-bottom
 
 local KEYS_HELP = "↑↓ move  ←→ lanes  ⏎ diff  space mark  c commit  m move  A absorb  e reword  n/N branch  a/u apply/unapply  z undo  O oplog  p push  P PR  L land  f pull  v/1-5 view  ? help"
 
@@ -820,7 +820,10 @@ local function lanes_view(state: State, model: gb.Model): Node
 	local detail = detail_pane(state, model, assigned)
 	local budget = list_px(state)
 	if state.cx.cols < 110 then
-		budget -= detail_reserve(state, model, assigned)
+		-- .bp-detail padding is 8px (styles.css); detail_pane's px counts the
+		-- top 8 only. One .bp-r covers that padding-bottom and the measured
+		-- remainder past main. It does not depend on the selection.
+		budget -= detail_reserve(state, model, assigned) + ROW
 	end
 	local function order_lanes(first: number): { number }
 		local order: { number } = {}

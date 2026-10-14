@@ -57,7 +57,7 @@
 [data-surface="plugin.gitbutler.workspace"] .bp-msg > *, [data-surface="plugin.gitbutler.workspace"] .bp-f > *, [data-surface="plugin.gitbutler.workspace"] .bp-card > * { flex-shrink: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-msg > .bp-t, [data-surface="plugin.gitbutler.workspace"] .bp-msg > .bp-path, [data-surface="plugin.gitbutler.workspace"] .bp-msg > .bp-bh-n, [data-surface="plugin.gitbutler.workspace"] .bp-f > .bp-t, [data-surface="plugin.gitbutler.workspace"] .bp-f > .bp-path, [data-surface="plugin.gitbutler.workspace"] .bp-card > .bp-t, [data-surface="plugin.gitbutler.workspace"] .bp-card > .bp-path, [data-surface="plugin.gitbutler.workspace"] .bp-card > .bp-bh-n { flex-shrink: 1; min-width: 0; overflow: hidden; }
 
-/* lanes: card chrome matches HEAD (3 + 4 + line + 5), BODY and GAP in host.luau */
+/* lanes: card chrome matches HEAD (3 + 4 + line + 5), BODY (8 + 1) and GAP in host.luau */
 [data-surface="plugin.gitbutler.workspace"] .bp-lanes { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-lane { display: flex; flex-direction: column; padding-bottom: 8px; border: 1px solid transparent; border-top: 3px solid var(--lane); border-radius: 10px; background-color: var(--sf-card-bg); min-width: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-lane.bp-cur { border-color: var(--l3); border-top-color: var(--lane); }
