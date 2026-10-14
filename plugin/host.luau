@@ -617,13 +617,15 @@ local function hint(keys: string): Node
 	return sp(keys, "bp-hint")
 end
 
-local function detail_pane(state: State, model: gb.Model, assigned: { [string]: string }): (Node, number)
+-- The detail for `pick` (default: the selection), its height cap, and the
+-- height it uses.
+local function detail_pane(state: State, model: gb.Model, assigned: { [string]: string }, pick: Row?): (Node, number, number)
 	local available = math.max(0, list_px(state))
 	local budget = if state.cx.cols < 110 then math.min(384, available // 2) else available
 	if budget < 16 then
-		return el(""), budget
+		return el(""), budget, budget
 	end
-	local row = selected(state)
+	local row = pick or selected(state)
 	local kids: { Node } = {}
 	local px = 8
 	local limit = budget - (LH + 8)
@@ -729,7 +731,43 @@ local function detail_pane(state: State, model: gb.Model, assigned: { [string]: 
 	if keys then
 		add(hint(keys), 1)
 	end
-	return el("bp-detail", kids), budget
+	return el("bp-detail", kids), budget, px
+end
+
+-- Height a narrow pane keeps under the list for the detail: the tallest
+-- detail of the rows most likely to need the most room (a file, the commit
+-- with the most files and body lines, the branch with the most commits).
+-- It depends on the workspace, not the selection, so picking a row never
+-- moves the rows under the pointer.
+local function detail_reserve(state: State, model: gb.Model, assigned: { [string]: string }): number
+	local best: { [string]: Row } = {}
+	local weight: { [string]: number } = {}
+	for _, r in state.rows do
+		local w = 0
+		if r.kind == "commit" then
+			local c = commit_of_row(model, r)
+			if c then
+				local _, lines = string.gsub(c.message, "\n", "\n")
+				w = #c.files + lines
+			end
+		elseif r.kind == "branch" then
+			local b = branch_of_row(model, r)
+			w = if b then #b.commits else 0
+		end
+		if best[r.kind] == nil or w > weight[r.kind] then
+			best[r.kind], weight[r.kind] = r, w
+		end
+	end
+	local most = 0
+	for _, r in best do
+		local _, _, used = detail_pane(state, model, assigned, r)
+		most = math.max(most, used)
+	end
+	if most == 0 then
+		local _, _, used = detail_pane(state, model, assigned, nil)
+		most = used
+	end
+	return most
 end
 
 -- Side by side when the pane is wide, stacked when narrow. CSS decides with
@@ -750,10 +788,10 @@ local function lanes_view(state: State, model: gb.Model): Node
 	local assigned = assignments(model)
 	local current = selected(state)
 	-- A narrow pane puts the detail under the lanes.
-	local detail, detail_px = detail_pane(state, model, assigned)
+	local detail = detail_pane(state, model, assigned)
 	local budget = list_px(state)
 	if state.cx.cols < 110 then
-		budget -= detail_px
+		budget -= detail_reserve(state, model, assigned)
 	end
 	local function order_lanes(first: number): { number }
 		local order: { number } = {}
@@ -927,10 +965,10 @@ local function graph_view(state: State, model: gb.Model): Node
 	end
 
 	-- A narrow pane puts the detail under the list.
-	local detail, detail_px = detail_pane(state, model, assigned)
+	local detail = detail_pane(state, model, assigned)
 	local budget = list_px(state)
 	if state.cx.cols < 110 then
-		budget -= detail_px
+		budget -= detail_reserve(state, model, assigned)
 	end
 	local room = fit_lines(budget) - 2
 	local lo, hi, up, down = window(list, state.viewport, room)
