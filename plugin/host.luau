@@ -731,7 +731,7 @@ local function detail_pane(state: State, model: gb.Model, assigned: { [string]: 
 	if keys then
 		add(hint(keys), 1)
 	end
-	return el("bp-detail", kids), budget, px
+	return el("bp-detail", kids), budget, px + 8 -- padding-bottom; px already counted the top 8
 end
 
 -- Height a narrow pane keeps under the list so every selectable row's
@@ -820,10 +820,7 @@ local function lanes_view(state: State, model: gb.Model): Node
 	local detail = detail_pane(state, model, assigned)
 	local budget = list_px(state)
 	if state.cx.cols < 110 then
-		-- .bp-detail padding is 8px (styles.css); detail_pane's px counts the
-		-- top 8 only. One .bp-r covers that padding-bottom and the measured
-		-- remainder past main. It does not depend on the selection.
-		budget -= detail_reserve(state, model, assigned) + ROW
+		budget -= detail_reserve(state, model, assigned)
 	end
 	local function order_lanes(first: number): { number }
 		local order: { number } = {}
