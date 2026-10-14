@@ -178,7 +178,28 @@ end
 
 -- Keys become node ids: keep them to safe characters.
 local function key_of(kind: string, id: string): string
-	return kind .. "-" .. (string.gsub(id, "[^%w_:%-]", "_"))
+	return kind .. "-" .. (string.gsub(id, ".", function(c)
+		return string.format("%02x", string.byte(c))
+	end))
+end
+
+local function branch_key(b: gb.Branch, stack: gb.Stack): string
+	if b.name ~= "" then
+		return key_of("b", b.name)
+	end
+	local ids: { string } = { b.id }
+	for _, branch in stack.branches do
+		table.insert(ids, branch.name)
+		for _, c in branch.commits do
+			table.insert(ids, c.changeId .. ":" .. c.sha)
+		end
+		table.insert(ids, "\1")
+	end
+	return key_of("b", "\0" .. table.concat(ids, "\0"))
+end
+
+local function commit_key(c: gb.Commit): string
+	return key_of("c", c.changeId .. "\0" .. c.sha)
 end
 
 -- Rows by lane: lane 1 is the uncommitted changes, then one per stack.
@@ -194,37 +215,41 @@ local function build_rows(state: State)
 	lanes[1] = {}
 	if model then
 		for _, f in model.unassigned do
-			add(1, { key = key_of("f", f.id), kind = "file", lane = 1, id = f.id, label = f.path, path = f.path, change = f.change })
+			add(1, { key = key_of("f", f.path), kind = "file", lane = 1, id = f.id, label = f.path, path = f.path, change = f.change })
 		end
 		for i, stack in model.stacks do
 			local lane = i + 1
 			lanes[lane] = {}
 			for _, f in stack.assigned do
-				add(lane, { key = key_of("a", f.id), kind = "file", lane = lane, id = f.id, label = f.path, path = f.path, change = f.change })
+				add(lane, { key = key_of("a", f.path), kind = "file", lane = lane, id = f.id, label = f.path, path = f.path, change = f.change })
 			end
 			for _, b in stack.branches do
 				local name = gb.label(b)
-				local bkey = key_of("b", b.id)
+				local bkey = branch_key(b, stack)
 				add(lane, { key = bkey, kind = "branch", lane = lane, id = if b.name ~= "" then b.name else b.id, label = name, branch = b.name, bkey = bkey })
 				for _, c in b.commits do
-					add(lane, { key = key_of("c", c.id), kind = "commit", lane = lane, id = c.id, label = c.title, branch = b.name, bkey = bkey, changeId = c.changeId, message = c.message })
+					add(lane, { key = commit_key(c), kind = "commit", lane = lane, id = c.id, label = c.title, branch = b.name, bkey = bkey, changeId = c.changeId, message = c.message })
 					for _, f in c.files do
-						add(lane, { key = key_of("cf", f.id), kind = "cfile", lane = lane, id = f.id, label = f.path, branch = b.name, bkey = bkey, path = f.path, change = f.change, changeId = c.changeId })
+						add(lane, { key = key_of("cf", c.changeId .. "\0" .. c.sha .. "\0" .. f.path), kind = "cfile", lane = lane, id = f.id, label = f.path, branch = b.name, bkey = bkey, path = f.path, change = f.change, changeId = c.changeId })
 					end
 				end
 			end
 		end
 	end
 	state.lanes, state.rows = lanes, rows
-	local found = false
+	local found, anchored = false, false
 	for _, r in rows do
 		found = found or r.key == state.cursor
+		anchored = anchored or r.key == state.viewport
 	end
 	if not found then
 		local row = rows[1]
 		state.cursor = if row then row.key else nil
 	end
-	state.viewport = state.cursor
+	local lane = tonumber(string.match(state.viewport or "", "^L(%d+)$"))
+	if state.view ~= "board" or not found or (not anchored and not (lane and lane >= 1 and lane <= #lanes + 1)) then
+		state.viewport = state.cursor
+	end
 end
 
 local function index_of(state: State, key: string?): number
@@ -520,7 +545,7 @@ end
 local function branch_of_row(model: gb.Model, row: Row): gb.Branch?
 	for _, stack in model.stacks do
 		for _, b in stack.branches do
-			if row.bkey ~= nil and key_of("b", b.id) == row.bkey then
+			if row.bkey ~= nil and branch_key(b, stack) == row.bkey then
 				return b
 			end
 		end
@@ -538,7 +563,7 @@ local function commit_of_row(model: gb.Model, row: Row): gb.Commit?
 	for _, stack in model.stacks do
 		for _, b in stack.branches do
 			for _, c in b.commits do
-				if key_of("c", c.id) == row.key then
+				if commit_key(c) == row.key then
 					return c
 				end
 			end
@@ -725,9 +750,9 @@ local function detail_reserve(state: State, model: gb.Model, assigned: { [string
 	local branches: { [string]: gb.Branch } = {}
 	for _, stack in model.stacks do
 		for _, b in stack.branches do
-			branches[key_of("b", b.id)] = b
+			branches[branch_key(b, stack)] = b
 			for _, c in b.commits do
-				commits[key_of("c", c.id)] = c
+				commits[commit_key(c)] = c
 			end
 		end
 	end
@@ -1629,8 +1654,8 @@ end
 
 -- Re-reads status before acting on specific files, so a poll that has not
 -- landed yet cannot hide a mark that no longer matches.
-local function fresh_files(state: State, picked: string?, use: ({ string }?, string) -> ())
-	local wanted = table.clone(state.marked)
+local function fresh_files(state: State, picked: string?, use: ({ string }?, string) -> (), only_picked: boolean?)
+	local wanted = if only_picked then {} else table.clone(state.marked)
 	state.reads += 1
 	read(state, "Checking changes…", { "status", "-f", "--json" }, function(data: any)
 		if apply_status(state, data) == nil then
@@ -2190,10 +2215,11 @@ end
 -- Discards the checked or selected uncommitted files, or the selected
 -- commit, committed file or branch. Always a danger confirm; `but undo`
 -- brings it back.
-local function action_discard(state: State)
-	local row = selected(state)
-	if has_marks(state) or (row and row.kind == "file") then
-		local picked = if has_marks(state) or row == nil then nil else row.path
+local function action_discard(state: State, target: Row?)
+	local row = target or selected(state)
+	local marked = target == nil and has_marks(state)
+	if marked or (row and row.kind == "file") then
+		local picked = if marked or row == nil then nil else row.path
 		fresh_files(state, picked, function(ids: { string }?, what: string)
 			if ids == nil then
 				notify(state, "warning", "Select or check the files to discard.")
@@ -2205,7 +2231,7 @@ local function action_discard(state: State)
 			}, args, true, function()
 				mutate(state, "Discarding…", args, MUTATE_TIMEOUT_MS, "Discarded " .. what)
 			end)
-		end)
+		end, target ~= nil)
 		return
 	end
 	if row and row.kind == "branch" then
@@ -2944,14 +2970,26 @@ end
 local BOARD_TOOLS = LH + 22 -- toolbar buttons, padding, the gap below
 local COL_CHROME = 3 + 16 + ROW + 2 -- top edge, padding, column head, its gap
 
+local function held_key(state: State): string
+	local paths: { string } = {}
+	for path, on in state.marked do
+		if on then
+			table.insert(paths, path)
+		end
+	end
+	table.sort(paths)
+	return if #paths > 0 then key_of("marks", table.concat(paths, "\0")) else state.cursor or ""
+end
+
 local function board_view(state: State, model: gb.Model): Node
 	local row = selected(state)
 	local held = if has_marks(state) or (row ~= nil and row.kind == "file") then "files" elseif row then row.kind else ""
+	local source = held_key(state)
 	local function button(label: string, act: string, class: string?): Node
 		return ui.el("button", { class = "bp-btn" .. (if class then " " .. class else ""), text = label, actions = { click = act } }, {})
 	end
 	local function drop(label: string, op: string, key: string): Node
-		return button(label, "drop=" .. op .. ":" .. key, "bp-drop")
+		return button(label, "drop=" .. op .. ":" .. source .. ":" .. key, "bp-drop")
 	end
 	-- Tern shows a menu item's action id as its label, so items are plain
 	-- labels (MENU maps them); the event's node id names the card's row.
@@ -3033,20 +3071,21 @@ local function board_view(state: State, model: gb.Model): Node
 	local col_lines = math.min(math.ceil((#state.lanes + 1) / per_line), math.max(1, (budget + 8) // (COL_CHROME + 3 * ROW + 8)))
 	local capacity = per_line * col_lines
 	local anchor = state.rows[index_of(state, state.viewport)]
-	local first = math.clamp((if anchor then anchor.lane else 1) - capacity // 2, 1, math.max(1, #state.lanes + 2 - capacity))
+	local lane = if anchor then anchor.lane else tonumber(string.match(state.viewport or "", "^L(%d+)$")) or 1
+	local first = math.clamp(lane - capacity // 2, 1, math.max(1, #state.lanes + 2 - capacity))
 	local last = math.min(#state.lanes + 1, first + capacity - 1)
 	local room = math.max(0, math.floor(((budget - (col_lines - 1) * 8) / col_lines - COL_CHROME) / ROW))
 	local function column(lane: number, head: { Node }, rows: { Row }, empty: string): Node
 		local kids: { Node } = { el("bp-colh", head) }
 		local lo, hi, up, down = window(rows, state.viewport, room)
 		if up then
-			table.insert(kids, sp("↑ " .. (lo - 1) .. " more", "bp-dim"))
+			table.insert(kids, button("↑ " .. (lo - 1) .. " more", "browse=" .. rows[lo - 1].key))
 		end
 		for i = lo, hi do
 			table.insert(kids, render(rows[i]))
 		end
 		if down then
-			table.insert(kids, sp("↓ " .. (#rows - hi) .. " more", "bp-dim"))
+			table.insert(kids, button("↓ " .. (#rows - hi) .. " more", "browse=" .. rows[hi + 1].key))
 		end
 		if #rows == 0 then
 			table.insert(kids, sp(empty, "bp-dim"))
@@ -3091,6 +3130,8 @@ local function board_view(state: State, model: gb.Model): Node
 	end
 
 	local tools = el("bp-tools", {
+		button("←", "browse=L" .. math.max(1, first - 1)),
+		button("→", "browse=L" .. math.min(#state.lanes + 1, last + 1)),
 		button("Commit", "do=c"),
 		button("Absorb", "do=A"),
 		button("New branch", "do=n"),
@@ -3157,7 +3198,7 @@ local NAMED: { [string]: string } = {
 }
 
 -- Operations with no block key, by name (board toolbar, right-click menus, palette).
-local OPS: { [string]: (State) -> () } = {
+local OPS: { [string]: (State, Row?) -> () } = {
 	redo = action_redo,
 	discard = action_discard,
 	uncommit = action_uncommit,
@@ -3173,13 +3214,17 @@ local function guarded(state: State, go: () -> ())
 	end
 end
 
-local function run_action(state: State, k: string): boolean
-	local action = ACTIONS[k] or OPS[k]
-	if action == nil then
+local function run_action(state: State, k: string, target: Row?): boolean
+	local action, op = ACTIONS[k], OPS[k]
+	if action == nil and op == nil then
 		return false
 	end
 	guarded(state, function()
-		action(state)
+		if op then
+			op(state, target)
+		elseif action then
+			action(state)
+		end
 	end)
 	return true
 end
@@ -3205,17 +3250,21 @@ local function board_do(state: State, k: string, key: string?)
 	for _, r in state.rows do
 		if r.key == key then
 			state.cursor = key
-			run_action(state, k)
+			run_action(state, k, r)
 			return
 		end
 	end
 	notify(state, "warning", "That menu target is gone: the workspace changed.")
 end
 
--- A board drop button: `<op>:<target row key>`. What moves is the selection
+-- A board drop button: `<op>:<source key>:<target row key>`. What moves is the selection
 -- (or the checked files); the target is captured by key, not position.
 local function drop_on(state: State, value: string)
-	local op, key = string.match(value, "^([^:]+):(.*)$")
+	local op, source, key = string.match(value, "^([^:]+):([^:]*):(.*)$")
+	if source ~= held_key(state) then
+		notify(state, "warning", "The selected changes changed. Choose the drop again.")
+		return
+	end
 	local target: Row? = nil
 	for _, r in state.rows do
 		if r.key == key then
@@ -3286,7 +3335,9 @@ tern.block.define("workspace", {
 	end,
 
 	resize = function(state: State)
-		state.viewport = state.cursor
+		if state.view ~= "board" then
+			state.viewport = state.cursor
+		end
 	end,
 
 	view = function(state: State, _cx: BlockCx): BlockView
@@ -3332,7 +3383,9 @@ tern.block.define("workspace", {
 			settle_cursor(state)
 			local budget = list_px(state)
 			if state.list_budget ~= budget then
-				state.viewport = state.cursor
+				if state.view ~= "board" then
+					state.viewport = state.cursor
+				end
 				state.list_budget = budget
 			end
 			local view = state.view
@@ -3442,7 +3495,7 @@ tern.block.define("workspace", {
 		end
 		if ev.ev == "action" and (ev.act == "pick" or ev.act == "open") and type(ev.value) == "string" then
 			-- A row in any view (`el` rows with click and double-click actions).
-			if state.sheet == nil then
+			if state.sheet == nil and index_of(state, ev.value) > 0 then
 				state.cursor = ev.value
 				if ev.act == "open" then
 					open_diff(state)
@@ -3452,7 +3505,20 @@ tern.block.define("workspace", {
 		end
 		if ev.ev == "change" and ev.name == "mark" and type(ev.value) == "string" and ev.value ~= "" then
 			-- a board file's checkbox: the same marks as space
-			state.marked[ev.value] = if ev.checked then true else nil
+			for _, row in state.rows do
+				if row.kind == "file" and row.path == ev.value then
+					state.marked[ev.value] = if ev.checked then true else nil
+					break
+				end
+			end
+			return
+		end
+		if ev.ev == "action" and ev.act == "browse" and type(ev.value) == "string" then
+			local lane = tonumber(string.match(ev.value, "^L(%d+)$"))
+			if state.sheet == nil and state.diff == nil and state.view == "board"
+				and (index_of(state, ev.value) > 0 or (lane ~= nil and lane >= 1 and lane <= #state.lanes + 1)) then
+				state.viewport = ev.value
+			end
 			return
 		end
 		if ev.ev == "action" and ev.act == "drop" and type(ev.value) == "string" then

@@ -88,6 +88,61 @@ local function visit(node, fn, path)
     fn(node, path)
     for i, child in node.c or {} do visit(child, fn, path .. "." .. i) end
 end
+local function row_key(state, handle)
+    for _, row in state.rows do if row.key == handle then return handle end end
+    local kind, id = string.match(handle, "^([^%-]+)%-(.+)$")
+    for _, row in state.rows do
+        if kind == "b" and row.kind == "branch" then
+            for _, stack in state.model.stacks do
+                for _, branch in stack.branches do
+                    if branch.id == id and row.label == modules.gb.label(branch) then return row.key end
+                end
+            end
+        elseif row.id == id and ((kind == "f" and row.kind == "file" and row.lane == 1)
+            or (kind == "a" and row.kind == "file" and row.lane > 1)
+            or (kind == "c" and row.kind == "commit") or (kind == "cf" and row.kind == "cfile")) then
+            return row.key
+        end
+    end
+    return handle
+end
+local function action_value(main, prefix, target)
+    local value
+    visit(main, function(node)
+        local click = (node.p or {}).actions and node.p.actions.click
+        if type(click) == "string" and string.sub(click, 1, #prefix) == prefix
+            and (target == nil or string.sub(click, -#target) == target) then
+            value = string.match(click, "^[^=]+=(.*)$")
+        end
+    end)
+    return value
+end
+local function node_by_key(node, key, path)
+    path = path or "main"
+    if (node.p or {}).key == key then return node, path end
+    for i, child in node.c or {} do
+        local found, id = node_by_key(child, key, path .. "." .. tostring((child.p or {}).key or i))
+        if found then return found, id end
+    end
+    return nil, nil
+end
+local function click_text(state, cx, text, column)
+    local main = workspace.view(state, cx).main
+    local scope = if column then node_by_key(main, column) else main
+    local value
+    if scope then
+        visit(scope, function(node)
+            local p = node.p or {}
+            if type(p.text) == "string" and string.sub(p.text, 1, #text) == text and p.actions and p.actions.click then
+                value = p.actions.click
+            end
+        end)
+    end
+    if value == nil then return false end
+    local act, payload = string.match(value, "^([^=]+)=(.*)$")
+    workspace.event(state, { ev = "action", act = act, value = payload }, cx)
+    return true
+end
 local function positions(main)
     local found = {}
     visit(main, function(node, path)
@@ -165,10 +220,10 @@ do
     fixture = status(12)
     fixture.uncommittedChanges = {}
     workspace.key(state, { name = "r" }, cx)
-    check(positions(workspace.view(state, cx).main)["c-c5"] ~= nil,
+    check(positions(workspace.view(state, cx).main)[row_key(state, "c-c5")] ~= nil,
         "the fifth commit must be visible before the dock notice")
-    workspace.event(state, { ev = "action", act = "pick", value = "c-c5" }, cx)
-    check(positions(workspace.view(state, cx).main)["c-c5"] ~= nil,
+    workspace.event(state, { ev = "action", act = "pick", value = row_key(state, "c-c5") }, cx)
+    check(positions(workspace.view(state, cx).main)[row_key(state, "c-c5")] ~= nil,
         "pointer selection moved the fifth commit before the dock notice")
     workspace.key(state, { name = "c" }, cx)
     local after = workspace.view(state, cx)
@@ -181,7 +236,7 @@ do
         end
     end)
     check(notified, "committing an empty workspace must show its notice")
-    check(state.cursor == "c-c5" and positions(after.main)["c-c5"] ~= nil,
+    check(state.cursor == row_key(state, "c-c5") and positions(after.main)[row_key(state, "c-c5")] ~= nil,
         "the Nothing to commit notice hid the selected fifth commit")
     workspace.key(state, { name = "enter" }, cx)
     check(state.diff ~= nil and state.diff.id == "change5",
@@ -225,12 +280,12 @@ do
 end
 do
     local state, cx = init("graph", 78, 34, 12) -- 30 rows plus the two-row top bar
-    check(positions(workspace.view(state, cx).main)["c-c4"] ~= nil,
+    check(positions(workspace.view(state, cx).main)[row_key(state, "c-c4")] ~= nil,
         "the reported fourth commit must be visible before the click")
-    workspace.event(state, { ev = "action", act = "pick", value = "c-c4" }, cx)
-    check(positions(workspace.view(state, cx).main)["c-c4"] ~= nil,
+    workspace.event(state, { ev = "action", act = "pick", value = row_key(state, "c-c4") }, cx)
+    check(positions(workspace.view(state, cx).main)[row_key(state, "c-c4")] ~= nil,
         "pointer selection hid the reported fourth commit")
-    check(positions(resize(state, cx, 78, 24).main)["c-c4"] ~= nil,
+    check(positions(resize(state, cx, 78, 24).main)[row_key(state, "c-c4")] ~= nil,
         "shortening graph view hid the selected fourth commit")
 end
 for _, view in { "lanes", "graph", "stacks", "branches" } do
@@ -272,7 +327,7 @@ for _, view in { "branches", "stacks" } do
             table.insert(fixture.uncommittedChanges, { cliId = "u" .. i, filePath = "work-" .. i, changeType = "modified" })
         end
         workspace.key(state, { name = "r" }, cx)
-        local target = if view == "branches" then "f-u11" else "f-u4"
+        local target = if view == "branches" then row_key(state, "f-u11") else row_key(state, "f-u4")
         check(positions(workspace.view(state, cx).main)[target] ~= nil, view .. ": file selection fixture is visible")
         workspace.event(state, { ev = "action", act = "pick", value = target }, cx)
         local after
@@ -301,7 +356,7 @@ for _, view in { "branches", "stacks" } do
 end
 do
     local state, cx = init("lanes", 78, 30, 1)
-    workspace.event(state, { ev = "action", act = "pick", value = "c-c1" }, cx)
+    workspace.event(state, { ev = "action", act = "pick", value = row_key(state, "c-c1") }, cx)
     local before = positions(workspace.view(state, cx).main)
     workspace.key(state, { name = "r" }, cx)
     local after = positions(workspace.view(state, cx).main)
@@ -354,7 +409,7 @@ for _, view in { "lanes", "graph" } do
 end
 for _, view in { "lanes", "graph", "stacks", "branches" } do
     local state, cx = init(view, 78, 60, 7)
-    workspace.event(state, { ev = "action", act = "pick", value = "b-b1" }, cx)
+    workspace.event(state, { ev = "action", act = "pick", value = row_key(state, "b-b1") }, cx)
     for _ = 1, 4 do
         workspace.key(state, { name = "v" }, cx)
         check(positions(workspace.view(state, cx).main)[state.cursor] ~= nil,
@@ -362,11 +417,11 @@ for _, view in { "lanes", "graph", "stacks", "branches" } do
     end
     state.view = "lanes"
     workspace.key(state, { name = "home" }, cx)
-    workspace.event(state, { ev = "action", act = "pick", value = "c-c2" }, cx)
+    workspace.event(state, { ev = "action", act = "pick", value = row_key(state, "c-c2") }, cx)
     fixture = status(7)
     fixture.uncommittedChanges = {}
     workspace.key(state, { name = "r" }, cx)
-    check(positions(workspace.view(state, cx).main)["c-c2"] ~= nil,
+    check(positions(workspace.view(state, cx).main)[row_key(state, "c-c2")] ~= nil,
         "refreshing after the viewport anchor disappeared hid the selected commit")
     fixture = status(0)
     workspace.key(state, { name = "r" }, cx)
@@ -375,7 +430,7 @@ for _, view in { "lanes", "graph", "stacks", "branches" } do
 end
 do
     local state, cx = init("lanes", 78, 60, 7)
-    workspace.event(state, { ev = "action", act = "pick", value = "c-c1" }, cx)
+    workspace.event(state, { ev = "action", act = "pick", value = row_key(state, "c-c1") }, cx)
     local detail = workspace.view(state, cx).main.c[2].c[2] -- c[1] is the top bar
     local title, ids, body, files, hint = false, false, false, false, false
     visit(detail, function(node)
@@ -388,7 +443,7 @@ do
         if has_class(node, "bp-hint") then hint = string.find(node.p.text, "⏎ diff", 1, true) ~= nil end
     end)
     check(title and ids and body and files and hint, "a tall commit detail lost its ordinary contents")
-    workspace.event(state, { ev = "action", act = "pick", value = "b-b1" }, cx)
+    workspace.event(state, { ev = "action", act = "pick", value = row_key(state, "b-b1") }, cx)
     detail = workspace.view(state, cx).main.c[2].c[2]
     local count, commits = false, false
     visit(detail, function(node)
@@ -403,7 +458,7 @@ do
     -- A diff stays bound to its row: keys under it never act on the hidden
     -- cursor, and it closes when a refresh removes the row it shows.
     local state, cx = init("lanes", 78, 40, 5)
-    workspace.event(state, { ev = "action", act = "open", value = "c-c5" }, cx)
+    workspace.event(state, { ev = "action", act = "open", value = row_key(state, "c-c5") }, cx)
     check(state.diff ~= nil and state.diff.id == "change5", "the diff must open on the fifth commit")
     check(workspace.key(state, { name = "p", text = "p" }, cx) == false and state.sheet == nil,
         "a key under the diff started an action on the hidden cursor")
@@ -473,7 +528,7 @@ do
                 act .. ": a missing menu target fell back to the selection")
         end
     end
-    workspace.event(state, { ev = "action", act = "Discard…", id = "main.2.cols.L1.f-u2" }, cx)
+    workspace.event(state, { ev = "action", act = "Discard…", id = "main.2.cols.L1." .. row_key(state, "f-u2") }, cx)
     check(state.sheet ~= nil and state.sheet.command == "but discard zz:other.txt" and state.sheet.danger,
         "a live menu target must keep its guarded file action")
     workspace.key(state, { name = "escape" }, cx)
@@ -494,9 +549,9 @@ end
 for _, kind in { "commit", "cfile" } do
     for _, timing in { "prompt", "confirm", "absent" } do
         local state, cx = init("board", 78, 40, 2)
-        local key = if kind == "commit" then "c-c1" else "cf-1:1"
+        local key = if kind == "commit" then row_key(state, "c-c1") else row_key(state, "cf-1:1")
         workspace.event(state, { ev = "action", act = "pick", value = key }, cx)
-        workspace.event(state, { ev = "action", act = "drop", value = "newmove:" }, cx)
+        workspace.event(state, { ev = "action", act = "drop", value = action_value(workspace.view(state, cx).main, "drop=newmove:") }, cx)
         check(state.sheet ~= nil and state.sheet.kind == "prompt", kind .. ": new move must ask for a name")
         workspace.key(state, { name = "paste", text = "destination" }, cx)
         local function apply_destination()
@@ -548,8 +603,8 @@ for _, kind in { "file", "assigned", "commit", "cfile", "branch" } do
         fixture = data()
         workspace.key(state, { name = "r" }, cx)
         local targets = {
-            file = { "f-u1", "zz:work.txt" }, assigned = { "a-a1", "zz:assigned.txt" },
-            commit = { "c-c1", "change1" }, cfile = { "cf-1:1", "change1:file-1" }, branch = { "b-b1", "feature" },
+            file = { row_key(state, "f-u1"), "zz:work.txt" }, assigned = { row_key(state, "a-a1"), "zz:assigned.txt" },
+            commit = { row_key(state, "c-c1"), "change1" }, cfile = { row_key(state, "cf-1:1"), "change1:file-1" }, branch = { row_key(state, "b-b1"), "feature" },
         }
         local target = targets[kind]
         workspace.event(state, { ev = "action", act = "open", value = target[1] }, cx)
@@ -585,7 +640,7 @@ do
     fixture.stacks[1].branches[1].commits[1].changes[1].filePath = "ambiguous:path"
     fixture.stacks[1].branches[1].commits[1].changeId = ""
     workspace.key(state, { name = "r" }, cx)
-    for _, key in { "b-b1", "f-u1", "c-c1", "cf-1:1" } do
+    for _, key in { row_key(state, "b-b1"), row_key(state, "f-u1"), row_key(state, "c-c1"), row_key(state, "cf-1:1") } do
         local before = command_count("diff")
         workspace.event(state, { ev = "action", act = "open", value = key }, cx)
         check(state.diff == nil and command_count("diff") == before, "an unsafe diff target reached but: " .. key)
@@ -606,7 +661,7 @@ local function board_status()
     end
     return result
 end
-local function check_board(state, cx)
+local function check_board(state, cx, browsing)
     local result = workspace.view(state, cx)
     local board = result.main.c[2]
     local columns = board.c[2].c
@@ -619,7 +674,9 @@ local function check_board(state, cx)
     end
     local available = cx.rows * 17 - height(result.main.c[1]) - 32 - dock_height(result, cx)
     check(drawn <= available, "board " .. cx.cols .. "x" .. cx.rows .. ": needs " .. drawn .. "px, only " .. available .. "px available")
-    check(positions(result.main)[state.cursor] ~= nil, "board: keyboard cursor is outside the visible columns/cards")
+    if not browsing then
+        check(positions(result.main)[state.cursor] ~= nil, "board: keyboard cursor is outside the visible columns/cards")
+    end
 end
 for _, cols in { 35, 67, 78, 109, 160 } do
     for _, rows in { 24, 30, 60 } do
@@ -651,14 +708,197 @@ do
     workspace.view(state, cx)
     for _ = 1, 4 do workspace.key(state, { name = "down" }, cx) end
     local before = positions(workspace.view(state, cx).main)
-    check(before["f-u4"] ~= nil and before["f-u5"] ~= nil and before["f-u6"] ~= nil
-        and before["f-u3"] == nil and before["f-u7"] == nil,
+    check(before[row_key(state, "f-u4")] ~= nil and before[row_key(state, "f-u5")] ~= nil and before[row_key(state, "f-u6")] ~= nil
+        and before[row_key(state, "f-u3")] == nil and before[row_key(state, "f-u7")] == nil,
         "board: the five-line window must show files four through six before the click")
-    workspace.event(state, { ev = "action", act = "pick", value = "f-u6" }, cx)
+    workspace.event(state, { ev = "action", act = "pick", value = row_key(state, "f-u6") }, cx)
     local after = positions(workspace.view(state, cx).main)
     for key, path in before do check(after[key] == path, "board: pointer selection moved " .. key) end
-    workspace.event(state, { ev = "action", act = "open", value = "f-u6" }, cx)
+    workspace.event(state, { ev = "action", act = "open", value = row_key(state, "f-u6") }, cx)
     check(state.diff ~= nil and state.diff.id == "zz:work-6", "board: the second click opened another file")
+end
+for _, spec in {
+    { "f-u1", "zz:work.txt" }, { "a-a1", "zz:assigned.txt" }, { "b-b1", "feature" },
+    { "c-c1", "change1" }, { "cf-1:1", "change1:file-1" },
+} do
+    local state, cx = init("board", 78, 60, 2)
+    fixture = status(2)
+    table.insert(fixture.uncommittedChanges, { cliId = "other", filePath = "other.txt", changeType = "modified" })
+    fixture.stacks[1].assignedChanges = { { cliId = "a1", filePath = "assigned.txt", changeType = "modified" } }
+    workspace.key(state, { name = "r" }, cx)
+    local target = row_key(state, spec[1])
+    workspace.event(state, { ev = "action", act = "pick", value = target }, cx)
+    workspace.event(state, { ev = "change", name = "mark", value = "other.txt", checked = true }, cx)
+    local _, id = node_by_key(workspace.view(state, cx).main, target)
+    check(id ~= nil, spec[1] .. ": the discard card must be visible")
+    workspace.event(state, { ev = "action", act = if spec[1] == "b-b1" then "Discard branch…" else "Discard…", id = id }, cx)
+    check(state.sheet ~= nil and state.sheet.command == "but discard " .. spec[2] and state.sheet.danger,
+        spec[1] .. ": menu discard targeted marks instead of its card")
+    local before = command_count("discard")
+    workspace.key(state, { name = "enter" }, cx)
+    check(command_count("discard") == before, "Enter ran a destructive menu discard")
+    workspace.key(state, { name = "y", text = "y" }, cx)
+    local last
+    for _, argv in calls do if argv[4] == "discard" then last = argv[5] end end
+    check(command_count("discard") == before + 1 and last == spec[2], "confirmed menu discard changed the wrong entity")
+    workspace.event(state, { ev = "change", name = "mark", value = "other.txt", checked = true }, cx)
+    workspace.event(state, { ev = "action", act = "do", value = "discard" }, cx)
+    check(state.sheet ~= nil and state.sheet.command == "but discard zz:other.txt",
+        spec[1] .. ": toolbar discard stopped honoring marks")
+end
+for _, kind in { "file", "assigned", "branch", "anonymous", "commit", "cfile", "cfile-commit" } do
+    local state, cx = init("board", 160, 60, 2)
+    local function data()
+        local result = status(2)
+        result.stacks[1].assignedChanges = { { cliId = "a1", filePath = "assigned.txt", changeType = "modified" } }
+        if kind == "anonymous" then result.stacks[1].branches[1].name = "" end
+        return result
+    end
+    fixture = data()
+    workspace.key(state, { name = "r" }, cx)
+    local handles = { file = "f-u1", assigned = "a-a1", branch = "b-b1", anonymous = "b-b1",
+        commit = "c-c1", cfile = "cf-1:1", ["cfile-commit"] = "cf-1:1" }
+    local target = row_key(state, handles[kind])
+    workspace.event(state, { ev = "action", act = "pick", value = target }, cx)
+    local card, id = node_by_key(workspace.view(state, cx).main, target)
+    check(card ~= nil and id ~= nil, kind .. ": stale-event fixture must render its card")
+    local pick = card and string.match(card.p.actions.click, "^[^=]+=(.*)$")
+    local open = card and string.match(card.p.actions.dblclick, "^[^=]+=(.*)$")
+    fixture = data()
+    if kind == "file" then fixture.uncommittedChanges[1].filePath = "replacement.txt"
+    elseif kind == "assigned" then fixture.stacks[1].assignedChanges[1].filePath = "replacement.txt"
+    elseif kind == "branch" then fixture.stacks[1].branches[1].name = "replacement"
+    elseif kind == "cfile" then fixture.stacks[1].branches[1].commits[1].changes[1].filePath = "replacement.txt"
+    else fixture.stacks[1].branches[1].commits[1].changeId = "replacement" end
+    workspace.key(state, { name = "r" }, cx)
+    local cursor, before = state.cursor, #calls
+    workspace.event(state, { ev = "action", act = if kind == "anonymous" then "Unapply" else "Discard…", id = id }, cx)
+    check(state.sheet == nil and #calls == before and state.cursor == cursor,
+        kind .. ": a reused CLI id retargeted a menu action")
+    if state.sheet then workspace.key(state, { name = "escape" }, cx) end
+    cursor = state.cursor
+    workspace.event(state, { ev = "action", act = "pick", value = pick }, cx)
+    workspace.event(state, { ev = "action", act = "open", value = open }, cx)
+    check(state.cursor == cursor and state.diff == nil, kind .. ": stale pointer events selected or opened a replacement")
+end
+for _, change in { "destination-commit", "destination-branch", "source", "marks" } do
+    local state, cx = init("board", 160, 60, 2)
+    fixture = board_status()
+    table.insert(fixture.uncommittedChanges, { cliId = "other", filePath = "other.txt", changeType = "modified" })
+    workspace.key(state, { name = "r" }, cx)
+    workspace.event(state, { ev = "action", act = "pick", value = row_key(state, "c-c1-1") }, cx)
+    if change == "marks" then
+        workspace.event(state, { ev = "change", name = "mark", value = "work.txt", checked = true }, cx)
+    end
+    local op = if change == "destination-branch" then "move" elseif change == "source" then "newmove"
+        elseif change == "marks" then "newcommit" else "squash"
+    local target = if change == "destination-branch" then row_key(state, "b-b2")
+        elseif change == "destination-commit" then row_key(state, "c-c2-1") else nil
+    local value = action_value(workspace.view(state, cx).main, "drop=" .. op .. ":", target)
+    check(value ~= nil, change .. ": the drop must be rendered before refresh")
+    if change == "marks" then
+        workspace.event(state, { ev = "change", name = "mark", value = "work.txt", checked = false }, cx)
+        workspace.event(state, { ev = "change", name = "mark", value = "other.txt", checked = true }, cx)
+    else
+        fixture = board_status()
+        if change == "destination-branch" then fixture.stacks[2].branches[1].name = "replacement"
+        else
+            local stack = if change == "source" then 1 else 2
+            fixture.stacks[stack].branches[1].commits[1].changeId = "replacement"
+        end
+        workspace.key(state, { name = "r" }, cx)
+    end
+    local before = #calls
+    workspace.event(state, { ev = "action", act = "drop", value = value }, cx)
+    check(state.sheet == nil and #calls == before, change .. ": a stale drop retargeted the operation")
+end
+do
+    local state, cx = init("board", 160, 60, 0)
+    fixture = status(0)
+    fixture.uncommittedChanges = {}
+    for i, path in { "a/b", "a_b", "a.b", "a:b", "a\nb" } do
+        table.insert(fixture.uncommittedChanges, { cliId = "u" .. i, filePath = path, changeType = "modified" })
+    end
+    workspace.key(state, { name = "r" }, cx)
+    local seen = {}
+    for _, row in state.rows do
+        check(not seen[row.key], "different file paths produced the same event key")
+        seen[row.key] = true
+        workspace.event(state, { ev = "action", act = "pick", value = row.key }, cx)
+        check(state.cursor == row.key, "an encoded file key failed to select its row")
+    end
+end
+for _, held in { "commit", "cfile", "file", "marks" } do
+    local state, cx = init("board", 78, 24, 2)
+    fixture = board_status()
+    workspace.key(state, { name = "r" }, cx)
+    local source = row_key(state, if held == "commit" then "c-c1-1" elseif held == "cfile" then "cf-1-1:1" else "f-u1")
+    workspace.event(state, { ev = "action", act = "pick", value = source }, cx)
+    if held == "marks" then workspace.event(state, { ev = "change", name = "mark", value = "work.txt", checked = true }, cx) end
+    local new, seen = false, {}
+    for _ = 1, 12 do
+        local main = workspace.view(state, cx).main
+        for key in positions(main) do seen[key] = true end
+        check_board(state, cx, true)
+        check(state.cursor == source and (held ~= "marks" or state.marked["work.txt"]), "horizontal browsing changed the held source")
+        if node_by_key(main, "new") then new = true; break end
+        if not click_text(state, cx, "→") then break end
+    end
+    check(new and seen[row_key(state, "b-b4")] and seen[row_key(state, "c-c4-1")], held .. ": later destinations are unreachable")
+    local viewport = state.viewport
+    fixture = board_status()
+    fixture.upstreamState = { behind = 1 }
+    workspace.key(state, { name = "r" }, cx)
+    check(state.cursor == source and state.viewport == viewport, "refresh changed the held source or browsing viewport")
+    resize(state, cx, 78, 30)
+    check(state.cursor == source and state.viewport == viewport, "resize reset the independent viewport")
+    local op = if held == "commit" or held == "cfile" then "newmove" else "newcommit"
+    local value = action_value(workspace.view(state, cx).main, "drop=" .. op .. ":")
+    check(value ~= nil, "the new-branch drop disappeared while browsing")
+    workspace.event(state, { ev = "action", act = "drop", value = value }, cx)
+    check(state.sheet ~= nil and state.sheet.kind == "prompt", "the browsed new-branch target did not open its action")
+    if held == "commit" or held == "cfile" then
+        workspace.key(state, { name = "paste", text = "created" }, cx)
+        workspace.key(state, { name = "enter" }, cx)
+        local ref = if held == "commit" then "change1-1" else "change1-1:file-1"
+        check(state.sheet ~= nil and state.sheet.command == "but move " .. ref .. " -b created", "the browsed move lost its original source")
+    end
+    workspace.key(state, { name = "escape" }, cx)
+    local uncommitted = false
+    for _ = 1, 12 do
+        if node_by_key(workspace.view(state, cx).main, "L1") then uncommitted = true; break end
+        if not click_text(state, cx, "←") then break end
+    end
+    check(uncommitted and state.cursor == source, "browsing left could not return to Uncommitted with its source")
+end
+do
+    local state, cx = init("board", 78, 24, 20)
+    local source, target = row_key(state, "c-c1"), row_key(state, "c-c20")
+    workspace.event(state, { ev = "action", act = "pick", value = source }, cx)
+    local reached = false
+    for _ = 1, #state.rows do
+        local main = workspace.view(state, cx).main
+        check_board(state, cx, true)
+        check(state.cursor == source, "vertical browsing changed the held commit")
+        if positions(main)[target] then reached = true; break end
+        if not click_text(state, cx, "↓ ", "L2") then break end
+    end
+    check(reached, "an offscreen commit destination cannot be reached independently")
+    local value = action_value(workspace.view(state, cx).main, "drop=squash:", target)
+    check(value ~= nil, "the offscreen commit has no squash drop")
+    workspace.event(state, { ev = "action", act = "drop", value = value }, cx)
+    check(state.sheet ~= nil and state.sheet.command == "but squash change1 -t change20 --use-target-message",
+        "vertical browsing changed the squash source or destination")
+    workspace.key(state, { name = "enter" }, cx)
+    local last
+    for _, argv in calls do if argv[4] == "squash" then last = argv end end
+    check(last ~= nil and last[5] == "change1" and last[7] == "change20", "the browsed squash did not execute on its original entities")
+    local returned = false
+    for _ = 1, #state.rows do
+        if positions(workspace.view(state, cx).main)[source] then returned = true; break end
+        if not click_text(state, cx, "↑ ", "L2") then break end
+    end
+    check(returned and state.cursor == source, "browsing up lost the held commit")
 end
 for i = 1, math.min(12, #failures) do print(failures[i]) end
 for i = math.max(13, #failures - 5), #failures do print(failures[i]) end

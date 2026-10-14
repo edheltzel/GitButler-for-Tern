@@ -135,6 +135,7 @@ In this tutorial, you:
 - The **board** view works like the GitButler desktop app, with the mouse. Tern blocks can't drag, so you click what you want to move, then click where it goes:
   - Click a file, or tick the boxes of several, and the branches show **Commit here**, each commit shows **Amend**, and the New branch column offers **Commit to a new branch**.
   - Click a commit and other commits show **Squash** and **Above** (reorder), branches show **Move here**, and the Uncommitted column shows **Uncommit**. A committed file can **Move in** to another commit.
+  - Use the toolbar's **←** / **→** buttons to browse columns and click **↑ N more** / **↓ N more** to browse cards. These controls keep your selected change and checked files held while you reach another destination, including Uncommitted and New branch.
   - Right-click any card for its actions (commit, reword, push, PR, uncommit, discard, …). The toolbar has Commit, Absorb, New branch, Pull, Undo, Redo, Oplog and Discard.
   - Every change still asks first, and anything that rewrites pushed history or deletes work asks for **y**.
 
