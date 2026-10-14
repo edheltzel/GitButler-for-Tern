@@ -339,7 +339,9 @@ local function assignments(model: gb.Model): { [string]: string }
 end
 
 -- A row is one terminal line plus 6px (`.bp-r`, --bp-row). main never
--- scrolls, so the cap is design px (--sf-lh fallback 17), not cells.
+-- scrolls, so the cap is design px. 17 is --sf-lh's fallback: the block
+-- only has cell counts, so a shorter line overstates cx.rows * LH.
+-- Narrow lanes keep one row for that residual (lanes_view).
 -- Lane card chrome (HEAD, BODY, GAP) matches .bp-lane/.bp-lh/.bp-lanes in
 -- styles.css; the main padding and dock gap are Tern's, a static estimate.
 -- 60 cells and 2 dock lines: floor((1020 - 29 - 41 - 34) / 23) = 39.
@@ -820,7 +822,13 @@ local function lanes_view(state: State, model: gb.Model): Node
 	local detail = detail_pane(state, model, assigned)
 	local budget = list_px(state)
 	if state.cx.cols < 110 then
-		budget -= detail_reserve(state, model, assigned)
+		-- list_px is cx.rows * 17. The block never receives --sf-lh, so a
+		-- shorter line overstates the pane by about 1px per reported row.
+		-- Drawn lines are shorter by the same amount and cancel most of it;
+		-- the residual (this window: the detail box 5px past main) is under
+		-- one row. One ROW covers that, and costs one row when the line
+		-- really is 17. It does not depend on the selection.
+		budget -= detail_reserve(state, model, assigned) + ROW
 	end
 	local function order_lanes(first: number): { number }
 		local order: { number } = {}
