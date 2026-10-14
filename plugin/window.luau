@@ -351,7 +351,6 @@ tern.command({
 	id = "gui",
 	title = "GitButler: Open GUI",
 	icon = "git-branch",
-	keys = { "cmd+alt+shift+w" },
 	run = function(cx: WindowCx)
 		local root = focused_root(cx)
 		if root == nil then
@@ -381,7 +380,6 @@ tern.command({
 	id = "setup",
 	title = "GitButler: Set up this folder",
 	icon = "git-branch",
-	keys = { "cmd+alt+shift+j" },
 	run = function(cx: WindowCx)
 		local cwd = focused_cwd(cx)
 		if cwd == nil or cwd == "" then
@@ -423,26 +421,27 @@ tern.command({
 -- then hand it the action as a view event, so it runs on the block's
 -- selection with the block's confirmations. A block that is only now
 -- starting gets the event once its first view is up.
+-- No default chords: bind them in Tern's keybinds (`plugin.gitbutler.<id>`).
 local ACTIONS = {
-	{ "commit", "GitButler: Commit to a branch…", "cmd+alt+shift+c" },
-	{ "absorb", "GitButler: Absorb uncommitted changes", "cmd+alt+shift+a" },
-	{ "undo", "GitButler: Undo last operation", "cmd+alt+shift+z" },
-	{ "redo", "GitButler: Redo last undone operation", "cmd+alt+shift+y" },
-	{ "oplog", "GitButler: Restore from oplog…", "cmd+alt+shift+o" },
-	{ "move", "GitButler: Move selection to a branch…", "cmd+alt+shift+m" },
-	{ "reword", "GitButler: Reword commit / rename branch…", "cmd+alt+shift+e" },
-	{ "branch", "GitButler: New parallel branch…", "cmd+alt+shift+n" },
-	{ "stack", "GitButler: New stacked branch…", "cmd+alt+shift+x" },
-	{ "apply", "GitButler: Apply a branch…", "cmd+alt+shift+i" },
-	{ "unapply", "GitButler: Unapply selected stack…", "cmd+alt+shift+u" },
-	{ "push", "GitButler: Push selected branch…", "cmd+alt+shift+p" },
-	{ "pr", "GitButler: Open pull request…", "cmd+alt+shift+r" },
-	{ "land", "GitButler: Land selected branch…", "cmd+alt+shift+l" },
-	{ "view", "GitButler: Switch workspace view", "cmd+alt+shift+v" },
-	{ "pull", "GitButler: Pull upstream into applied branches…", "cmd+alt+shift+f" },
-	{ "uncommit", "GitButler: Uncommit selected commit or file…", "cmd+alt+shift+k" },
-	{ "discard", "GitButler: Discard selection…", "cmd+alt+shift+d" },
-	{ "help", "GitButler: Show workspace keys", "cmd+alt+shift+h" },
+	{ "commit", "GitButler: Commit to a branch…" },
+	{ "absorb", "GitButler: Absorb uncommitted changes" },
+	{ "undo", "GitButler: Undo last operation" },
+	{ "redo", "GitButler: Redo last undone operation" },
+	{ "oplog", "GitButler: Restore from oplog…" },
+	{ "move", "GitButler: Move selection to a branch…" },
+	{ "reword", "GitButler: Reword commit / rename branch…" },
+	{ "branch", "GitButler: New parallel branch…" },
+	{ "stack", "GitButler: New stacked branch…" },
+	{ "apply", "GitButler: Apply a branch…" },
+	{ "unapply", "GitButler: Unapply selected stack…" },
+	{ "push", "GitButler: Push selected branch…" },
+	{ "pr", "GitButler: Open pull request…" },
+	{ "land", "GitButler: Land selected branch…" },
+	{ "view", "GitButler: Switch workspace view" },
+	{ "pull", "GitButler: Pull upstream into applied branches…" },
+	{ "uncommit", "GitButler: Uncommit selected commit or file…" },
+	{ "discard", "GitButler: Discard selection…" },
+	{ "help", "GitButler: Show workspace keys" },
 }
 
 local function send_action(cx: WindowCx, pane: number, act: string)
@@ -450,12 +449,11 @@ local function send_action(cx: WindowCx, pane: number, act: string)
 end
 
 for _, a in ACTIONS do
-	local act, title, key = a[1] :: string, a[2] :: string, a[3]
+	local act, title = a[1], a[2]
 	tern.command({
 		id = act,
 		title = title,
 		icon = "git-branch",
-		keys = if key then { key :: string } else nil,
 		run = function(cx: WindowCx)
 			local root = focused_root(cx)
 			if root == nil then

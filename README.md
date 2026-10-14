@@ -149,48 +149,49 @@ In this tutorial, you:
 
 ## Keys
 
-Every GitButler command has a default chord, ⌥⇧⌘ plus a letter, and a palette entry named `GitButler: …`. A chord opens or focuses the workspace block and runs the action on its selection, with the same confirmations as the block's own key.
+Two commands have a default chord: ⌥⇧⌘G opens the workspace block and ⌥⇧⌘T opens `but tui`. Every command has a palette entry named `GitButler: …` and an id you can bind yourself (below). A bound key opens or focuses the workspace block and runs the action on its selection, with the same confirmations as the block's own key.
 
-| Chord | Id | Action | Block key |
+| Default | Id | Action | Block key |
 |---|---|---|---|
 | ⌥⇧⌘G | `open` | Open the workspace block | |
-| ⌥⇧⌘C | `commit` | Commit to a branch | c |
-| ⌥⇧⌘M | `move` | Move the selection to a branch | m |
-| ⌥⇧⌘A | `absorb` | Absorb uncommitted changes | A |
-| ⌥⇧⌘E | `reword` | Reword a commit or rename a branch | e |
-| ⌥⇧⌘N | `branch` | New parallel branch | n |
-| ⌥⇧⌘X | `stack` | New stacked branch | N |
-| ⌥⇧⌘I | `apply` | Apply a branch | a |
-| ⌥⇧⌘U | `unapply` | Unapply the selected stack | u |
-| ⌥⇧⌘Z | `undo` | Undo the last operation | z |
-| ⌥⇧⌘Y | `redo` | Redo the last undone operation | |
-| ⌥⇧⌘O | `oplog` | Restore from the oplog | O |
-| ⌥⇧⌘P | `push` | Push the selected branch | p |
-| ⌥⇧⌘R | `pr` | Open a pull request | P |
-| ⌥⇧⌘L | `land` | Land the selected branch | L |
-| ⌥⇧⌘F | `pull` | Pull upstream into applied branches | f |
-| ⌥⇧⌘K | `uncommit` | Uncommit the selected commit or file | |
-| ⌥⇧⌘D | `discard` | Discard the selection | |
-| ⌥⇧⌘V | `view` | Switch the workspace view | v |
-| ⌥⇧⌘H | `help` | Show the workspace keys | ? |
 | ⌥⇧⌘T | `tui` | Open `but tui` in a floating pane | |
-| ⌥⇧⌘W | `gui` | Open the GitButler app | |
-| ⌥⇧⌘J | `setup` | Set up this folder | |
+| | `gui` | Open the GitButler app | |
+| | `commit` | Commit to a branch | c |
+| | `move` | Move the selection to a branch | m |
+| | `absorb` | Absorb uncommitted changes | A |
+| | `reword` | Reword a commit or rename a branch | e |
+| | `branch` | New parallel branch | n |
+| | `stack` | New stacked branch | N |
+| | `apply` | Apply a branch | a |
+| | `unapply` | Unapply the selected stack | u |
+| | `undo` | Undo the last operation | z |
+| | `redo` | Redo the last undone operation | |
+| | `oplog` | Restore from the oplog | O |
+| | `push` | Push the selected branch | p |
+| | `pr` | Open a pull request | P |
+| | `land` | Land the selected branch | L |
+| | `pull` | Pull upstream into applied branches | f |
+| | `uncommit` | Uncommit the selected commit or file | |
+| | `discard` | Discard the selection | |
+| | `view` | Switch the workspace view | v |
+| | `help` | Show the workspace keys | ? |
+| | `setup` | Set up this folder | |
 
 ### Your own keys
 
-Every command is a Tern action named `plugin.gitbutler.<id>`, so you can rebind it in Tern's Keyboard settings (search "gitbutler") or in `settings.json`. Your entries win over the defaults above, and `"unbind"` removes a default:
+Every command is a Tern action named `plugin.gitbutler.<id>`. Bind the ones you want in Tern's `settings.json`; your entries win over the defaults above, and `"unbind"` removes one:
 
 ```json
 {
 	"keybinds": {
-		"ctrl+alt+m": "plugin.gitbutler.move",
-		"cmd+alt+shift+z": "unbind"
+		"cmd+alt+shift+c": "plugin.gitbutler.commit",
+		"cmd+alt+shift+p": "plugin.gitbutler.push",
+		"cmd+alt+shift+t": "unbind"
 	}
 }
 ```
 
-Tern's Keyboard settings list plugin actions by id with the description "A plugin's action."; a plugin can't set that label. The single-letter keys inside the block are fixed.
+Tern's Keyboard settings list only actions that have a key, by id with the description "A plugin's action." (a plugin can't set that label), so an unbound command shows there once you bind it. Don't use ⌥⇧⌘B or ⌥⇧⌘S: Tern's own keymap holds them. The single-letter keys inside the block are fixed.
 
 ### Getting back from a sheet
 
