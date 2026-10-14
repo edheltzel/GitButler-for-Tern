@@ -27,15 +27,15 @@ The Tern package: the only directory linked into Tern (`tern plugin link plugin`
 - Every surface uses `gb.root` to decide whether a folder is GitButler-managed. Don't add a second check.
 - `parse.luau` and `width.luau` stay free of `tern` so `luau check.luau` can run them.
 - Host-only APIs (`tern.block`, `tern.lens`, `tern.pane`) stay out of `window.luau`, and window-only APIs (`tern.command`, `tern.chrome`, `tern.route`, `cx.session`) stay out of the host files.
-- Board drops and right-click items run the same action functions as the keys, through the same confirm and push-state guards; never a second, unguarded path. Right-click item ids are plain labels mapped by `MENU` (Tern shows the id as the label); the row comes from the event's node id.
-- Every user-facing block action has a `tern.command` in `window.luau` `ACTIONS` whose id maps through host `NAMED` to an `ACTIONS` key or `OPS` op; `run_action` is the one dispatch for palette commands, the user's `settings.json` `keybinds` (`plugin.gitbutler.<id>`) and board buttons. Command ids are a user-facing contract: never rename or drop one silently, and list each in the README's "Your own keys" table. New default chords need asking first (root `AGENTS.md`).
-- `move` (move to a branch, reorder) stays refused while an uncommitted file shares a path with the moved change, checked when the action starts and again on a fresh `status -f --json` right before `mutate` (`fresh_move`; polling pauses while a sheet is open): a failed `but` 0.22.3 move drops the commit and those changes with no oplog entry (`DESIGN.md` finding 6).
+- Board drops and right-click items use the shared action functions and their confirm and push-state guards; never a second, unguarded path. Event routing is documented in `DESIGN.md`, Surfaces.
+- Palette and bound workspace actions map from `window.luau` `ACTIONS` through host `NAMED` to an `ACTIONS` key or `OPS` op; `run_action` also dispatches board toolbar and menu actions, while `drop_on` calls drop action functions directly. Command ids are a user-facing contract: never rename or drop one silently, and list each in the README's "Your own keys" table. New default chords need asking first (root `AGENTS.md`).
+- Moves and reorders retain the overlap refusal and fresh-status guard in `fresh_labels`; see `DESIGN.md` finding 6 for the CLI constraint.
 
 ## Work Guidance
 
 - Every file is `--!strict` Luau. Set node props through a local (`local p = node.p or {}; …; node.p = p`).
-- Destructive actions (undo, oplog restore, unapply, land, history rewrites) open a `confirm` sheet showing the exact `but` command, with `danger = true`. Danger sheets accept only an explicit `y`.
-- Report every outcome with `notify()` (dock line plus a toast) and run every `but` write through `mutate()` (start and result toasts with the command line). Don't set `state.notice` directly for an outcome the user should see; only the `v` view hint does that.
+- Confirmation requirements follow `DESIGN.md`, Action → command. Sheets show the exact `but` command; danger sheets accept only an explicit `y`.
+- Run every `but` write through `mutate()`; use `notify()` for other outcomes. `mutate()` owns its failure notice and toast; see `DESIGN.md` for notification behavior.
 - Pass `but` arguments as an argv list (no shell). Mutations add `--json` and are checked by exit status.
 - Async callbacks must check liveness (`running[pane] == state` / `pane_alive`) before touching state or sending effects.
 - Saving any file here reloads every plugin in the user's real Tern. A reload that fails mid-edit kills open blocks. To test a deliberately broken build, link a copy (`cp -R plugin /tmp/gbp`) into the isolated Tern instead.

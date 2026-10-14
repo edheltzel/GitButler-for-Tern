@@ -133,9 +133,10 @@ In this tutorial, you:
 - Press **v** in the workspace block to switch views: **lanes** (the default: an Uncommitted card plus a card per stack with its branches, commits and files on a colored line), **graph** (a commit graph with a lane per stack), **stacks** (one column per stack, like the GitButler app), **branches** (a branch list with the selected branch's commits, or the selected lane's uncommitted files) and **board** (below). Click a row to select it or double-click to open its diff. In **lanes** and **graph**, details sit beside the list, or under it in a narrow pane. These previews show the selected file's change and assignment, a commit's ids, message and files, or a branch's base and newest commits as space allows; short panes omit fields and shorten lists. Enlarge the pane to see more details, or press **⏎** for the full diff. Every key works the same in each view, and the block remembers your choice. Long labels clip to fit; `↑ N more` / `↓ N more` mark hidden rows you can reach with the arrow keys. In the branches view, the commit-count badge reports commits not shown, and `+N files` beside a commit counts its hidden files.
 - The **board** view works like the GitButler desktop app, with the mouse. Tern blocks can't drag, so you click what you want to move, then click where it goes:
   - Click a file, or tick the boxes of several, and the branches show **Commit here**, each commit shows **Amend**, and the New branch column offers **Commit to a new branch**.
-  - Click a commit and other commits show **Squash** and **Above** (reorder), branches show **Move here**, and the Uncommitted column shows **Uncommit**. A committed file can **Move in** to another commit.
+  - Click a commit to reveal its files. Other commits show **Squash** and **Above** (reorder), branches show **Move here**, and the Uncommitted column shows **Uncommit**. A committed file can **Move in** to another commit. The New branch column offers **Move to a new branch** for either selection.
   - Right-click any card for its actions (commit, reword, push, PR, uncommit, discard, …). The toolbar has Commit, Absorb, New branch, Pull, Undo, Redo, Oplog and Discard.
-  - Every change still asks first, and anything that rewrites pushed history or deletes work asks for **y**.
+  - Actions use the same prompts and confirmations as the other views; rewriting pushed history or deleting work requires **y**.
+  - Moves of commits or committed files, including reorders, stop when they touch a file with uncommitted changes. Commit, absorb or discard those changes first; the [CLI safety note](DESIGN.md#open-questions--findings) explains why.
 
   ![The board view: the toolbar, the Uncommitted column with checkboxes, a column per stack, and drop buttons on the branches and commits](docs/images/board.png)
 - **f** pulls: it checks the target branch (for example `origin/main`), says `Already up to date` when there is nothing new, and otherwise shows the new commit count and predicted branch or uncommitted-file conflicts. Press **y** to check again; a changed plan requires another confirmation before pulling. Pulling rebases every applied branch onto the target. The result reports actual branch and unresolved file conflicts, or warns when the result or worktree status could not be verified; **z** undoes the pull. When the target is ahead, the bottom line reads `N behind upstream`.
@@ -198,7 +199,7 @@ The single-letter keys inside the block are fixed.
 
 ### Getting back from a sheet
 
-Most workspace keys open a sheet at the top of the block. Every sheet has a **Cancel** button (**Close** on help), and Escape closes it. `q` also closes every sheet except a text prompt, where it types a q. A pasted "q", Shift+Q or Ctrl+Q never closes a sheet.
+Most workspace keys open a sheet at the top of the block. Every sheet has a **Cancel** button (**Close** on help) just below its title. Escape closes the sheet when the block receives it; if a picker keeps keyboard focus, click **Cancel**. `q` also closes every sheet except a text prompt, where it types a q. A pasted "q", Shift+Q or Ctrl+Q never closes a sheet.
 
 | Key | Sheet | Closes with |
 |---|---|---|
