@@ -84,7 +84,6 @@ type DiffState = {
 	problem: string?,
 	gen: number, -- reloads started before this are dropped
 	kind: string,
-	key: string?,
 	bind: string?, -- changeId, changeId+path, path, or branch name; nil if unnamed
 }
 
@@ -164,7 +163,6 @@ local function follow_diff(state: State): DiffState?
 	-- new patch; a cliId-only change is not. Reload by the stable id.
 	local previous = if row.kind == "commit" then string.match(d.label, "^%S+ (.*)$") else d.label
 	local retitle = if row.kind == "commit" then previous ~= row.label else previous ~= next
-	d.key = row.key
 	d.label = next
 	if retitle then
 		load_diff(d)
@@ -2108,7 +2106,6 @@ local function open_diff(state: State)
 		problem = nil,
 		gen = 0,
 		kind = row.kind,
-		key = row.key,
 		bind = diff_bind(row),
 	}
 	state.diff = d
