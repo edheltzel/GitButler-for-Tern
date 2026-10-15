@@ -86,7 +86,7 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
 ## Child DOX Index
 
 - `plugin/AGENTS.md`: the Tern package: file ownership, architecture boundaries (budgets, `but`-only writes, half separation), Luau coding standards, verification commands
-- `regroup/AGENTS.md`: dated status check-ins, append-only
+- `regroup/AGENTS.md`: dated status check-ins; only the latest is kept
 
 Owned here (no child doc): `DESIGN.md` (surfaces, JSON fields relied on, action → command map, findings), `README.md` (user tutorial), `docs/images/` (README screenshots: `tern ctl … shot NAME` in the isolated Tern against a demo repo, copied from `/tmp/ttc/target/shots/tern/live/`; keep them outside `plugin/` so they never reload Tern). Retake a screenshot when the UI it shows changes. `.codegraph/`: the codegraph index; only its `.gitignore` is tracked, the database stays local. `todo.txt` / `done.txt` at the root: the project's task list (tuxedo, tag `+gitbutler-for-tern`), git-ignored so it stays local. It is the source of truth: `~/todo.txt` routes to it (`@route @mirror`) and a local watcher copies its open tasks there, so edit tasks here, never in the global copy.
 
