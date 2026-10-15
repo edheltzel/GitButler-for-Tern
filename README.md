@@ -81,7 +81,11 @@ You should see the **GitButler** workspace block open beside your shell. Its top
 
 Use **↑** and **↓** to select `b.txt`, then press **⏎**.
 
-You should see the diff open inside the workspace block, in place of the lanes, showing the new line `+hello`. Press **Esc**, or click **← Back**, to return to the lanes, then press **⏎** on another row to see its diff.
+You should see the diff open inside the workspace block, in place of the lanes, showing the new line `+hello`. Press **Esc**, **Backspace** or **q**, or click **← Back**, to return to the lanes. A view tab returns directly to that view. Then press **⏎** on another row to see its diff.
+
+While the diff is open, workspace action keys such as **c** and **p** are inactive. Return to the list first, or use a palette action, which returns to the list and acts on its selection. **r** reloads the patch and workspace; the diff closes when its target disappears from the workspace.
+
+Rows without a stable diff target show a warning. This includes unnamed branches, paths containing `:`, and commits or committed files without a change id.
 
 ![The diff inside the workspace block, under its tabs and sync chips](docs/images/diff.png)
 
@@ -137,7 +141,7 @@ In this tutorial, you:
   - Click a commit and other commits show **Squash** and **Above** (reorder), branches show **Move here**, and the Uncommitted column shows **Uncommit**. A committed file can **Move in** to another commit.
   - Use the toolbar's **←** / **→** buttons to browse columns and click **↑ N more** / **↓ N more** to browse cards. Short columns put **↑** / **↓** in the header when a marker cannot fit. These controls keep your selected change and checked files held while you reach another destination, including Uncommitted and New branch.
   - Right-click any card for its actions (commit, reword, push, PR, uncommit, discard, …). The toolbar has Commit, Absorb, New branch, Pull, Undo, Redo, Oplog and Discard.
-  - Every change still asks first, and anything that rewrites pushed history or deletes work asks for **y**.
+  - Actions use the same prompts and confirmation guards as the keyboard and palette; confirmation sheets show the exact `but` command. Anything that rewrites pushed history or deletes work asks for **y**. See the action reference in [DESIGN.md](DESIGN.md) for each operation's confirmation rules.
 
   ![The board view: the toolbar, the Uncommitted column with checkboxes, a column per stack, and drop buttons on the branches and commits](docs/images/board.png)
 - **f** pulls, and so does a click on the upstream chip: it checks the target branch (for example `origin/main`), says `Already up to date` when there is nothing new, and otherwise shows the new commit count and predicted branch or uncommitted-file conflicts. Press **y** to check again; a changed plan requires another confirmation before pulling. Pulling rebases every applied branch onto the target. The result reports actual branch and unresolved file conflicts, or warns when the result or worktree status could not be verified; **z** undoes the pull. When the target is ahead, the chip reads **N upstream commits**; after a pull it turns green and reads **Up to date**.
@@ -152,7 +156,7 @@ In this tutorial, you:
 
 ## Keys
 
-Two commands have a default chord: ⌥⇧⌘G opens the workspace block and ⌥⇧⌘T opens `but tui`. Every command has a palette entry named `GitButler: …` and an id you can bind yourself (below). A bound key opens or focuses the workspace block and runs the action on its selection, with the same confirmations as the block's own key.
+Two commands have a default chord: ⌥⇧⌘G opens the workspace block and ⌥⇧⌘T opens `but tui`. Every command has a palette entry named `GitButler: …` and an id you can bind yourself (below). For workspace actions, a bound key opens or focuses the block and runs the action on its selection, with the same confirmations as its controls.
 
 | Default | Id | Action | Block key |
 |---|---|---|---|

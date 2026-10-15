@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Butler Pane (https://github.com/edheltzel/Butler-Pane): a Tern plugin (Luau) that teaches Tern about GitButler: a status segment, a workspace block (view tabs, sync chips, diffs in place), command lenses, and actions, all driven by the `but` CLI. Design and findings: `DESIGN.md`. User guide: `README.md`. The plugin id stays `gitbutler`, so command ids remain `plugin.gitbutler.*`; its display name in Tern (`plugin.toml` `name`, the palette group and `tern plugin list`) is `GitButler`.
+Product introduction, source repository and user guide: `README.md`. Design and findings: `DESIGN.md`. The plugin id stays `gitbutler`, so command ids remain `plugin.gitbutler.*`; its display name in Tern (`plugin.toml` `name`, the palette group and `tern plugin list`) is `GitButler`.
 
 ## DOX
 
@@ -12,7 +12,7 @@ These `AGENTS.md` files are binding work contracts for their subtrees.
 
 ## GitButler is mandatory
 
-This repo is a GitButler workspace (`gitbutler/workspace`, target `origin/main`, remote `origin` = github.com/edheltzel/Butler-Pane, public, default branch `main`), and the plugin requires `but` at run time. Work lands on `main` through a PR (`but pr new <branch>`).
+This repo is a GitButler workspace (`gitbutler/workspace`, target `origin/main`, remote `origin`, public, default branch `main`), and the plugin requires `but` at run time. Work lands on `main` through a PR (`but pr new <branch>`).
 
 - **VCS in this repo:** use `but` for every write: `but commit -b <branch> -m "<msg>" <ids>`, `but push <branch>`, `but pr new <branch>`. Never run `git add`, `commit`, `checkout`, `switch`, `merge`, `rebase`, `reset`, `stash`, `cherry-pick` or `push`. Read-only git (`git log`, `git show`, `git diff`, `git blame`) is fine. Follow `skill://but`.
 - If HEAD is ever not `gitbutler/workspace`, stop and ask. Do not work around it with plain git or `but teardown`.

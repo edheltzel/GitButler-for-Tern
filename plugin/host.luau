@@ -1,7 +1,4 @@
 --!strict
--- The host half: the workspace block (one lane per applied stack, plus the
--- uncommitted changes and where each is assigned), the diff block, and the
--- command lenses (lenses.luau). Blocks read `but … --json` in the background.
 
 local gb = require("./gb")
 local width = require("./width")
