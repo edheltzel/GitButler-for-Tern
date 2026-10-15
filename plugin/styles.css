@@ -1,4 +1,4 @@
-/* Workspace views (lanes, graph, stacks, branches), scoped to the workspace block.
+/* Workspace views (lanes, graph, stacks, branches, board), scoped to the workspace block.
    Tern CSS has no `ch` unit: widths use the cell width var(--sf-cw). */
 [data-surface="plugin.gitbutler.workspace"] {
 	--bp-cw: var(--sf-cw);
@@ -9,6 +9,20 @@
 [data-surface="plugin.gitbutler.workspace"] .bp-l2 { --lane: var(--ink-pen); }
 [data-surface="plugin.gitbutler.workspace"] .bp-l3 { --lane: var(--sf-info); }
 [data-surface="plugin.gitbutler.workspace"] .bp-l4 { --lane: var(--warn); }
+
+/* top bar: view tabs, then the sync chips (GitButler's own words) */
+[data-surface="plugin.gitbutler.workspace"] .bp-top { display: flex; flex-shrink: 0; align-items: center; gap: var(--bp-cw); padding-bottom: 8px; white-space: nowrap; overflow: hidden; }
+[data-surface="plugin.gitbutler.workspace"] .bp-tabs { display: flex; flex-wrap: wrap; gap: 8px 4px; flex-shrink: 1; min-width: 0; }
+[data-surface="plugin.gitbutler.workspace"] .bp-tab.bp-on { background-color: var(--accent); border-color: var(--accent); color: var(--card); font-weight: 600; }
+[data-surface="plugin.gitbutler.workspace"] .bp-stats { display: flex; flex-wrap: wrap; gap: 8px 4px; margin-left: auto; min-width: 0; }
+[data-surface="plugin.gitbutler.workspace"] .bp-top2 { flex-direction: column; align-items: flex-start; row-gap: 8px; }
+[data-surface="plugin.gitbutler.workspace"] .bp-top2 > * { max-width: 100%; }
+[data-surface="plugin.gitbutler.workspace"] .bp-top2 > .bp-stats { margin-left: 0; }
+[data-surface="plugin.gitbutler.workspace"] .bp-stat { padding: 1px var(--bp-cw); border-radius: 10px; border: 1px solid transparent; font-weight: 600; color: var(--card); }
+[data-surface="plugin.gitbutler.workspace"] .bp-stat-ok { background-color: var(--ok); }
+[data-surface="plugin.gitbutler.workspace"] .bp-stat-warn { background-color: var(--warn); }
+[data-surface="plugin.gitbutler.workspace"] .bp-stat-bad { background-color: var(--bad); }
+[data-surface="plugin.gitbutler.workspace"] .bp-stat-busy { background-color: var(--accent); }
 
 /* shared */
 [data-surface="plugin.gitbutler.workspace"] .bp-t { color: var(--ink); }
@@ -41,10 +55,10 @@
 [data-surface="plugin.gitbutler.workspace"] .bp-dot.bp-base { background-color: var(--ink3); }
 
 /* the text gives way first, so ids, change letters and badges stay on screen */
-[data-surface="plugin.gitbutler.workspace"] .bp-msg > *, [data-surface="plugin.gitbutler.workspace"] .bp-f > * { flex-shrink: 0; }
-[data-surface="plugin.gitbutler.workspace"] .bp-msg > .bp-t, [data-surface="plugin.gitbutler.workspace"] .bp-msg > .bp-path, [data-surface="plugin.gitbutler.workspace"] .bp-msg > .bp-bh-n, [data-surface="plugin.gitbutler.workspace"] .bp-f > .bp-t, [data-surface="plugin.gitbutler.workspace"] .bp-f > .bp-path { flex-shrink: 1; min-width: 0; overflow: hidden; }
+[data-surface="plugin.gitbutler.workspace"] .bp-msg > *, [data-surface="plugin.gitbutler.workspace"] .bp-f > *, [data-surface="plugin.gitbutler.workspace"] .bp-card > * { flex-shrink: 0; }
+[data-surface="plugin.gitbutler.workspace"] .bp-msg > .bp-t, [data-surface="plugin.gitbutler.workspace"] .bp-msg > .bp-path, [data-surface="plugin.gitbutler.workspace"] .bp-msg > .bp-bh-n, [data-surface="plugin.gitbutler.workspace"] .bp-f > .bp-t, [data-surface="plugin.gitbutler.workspace"] .bp-f > .bp-path, [data-surface="plugin.gitbutler.workspace"] .bp-card > .bp-t, [data-surface="plugin.gitbutler.workspace"] .bp-card > .bp-path, [data-surface="plugin.gitbutler.workspace"] .bp-card > .bp-bh-n { flex-shrink: 1; min-width: 0; overflow: hidden; }
 
-/* lanes: card chrome matches HEAD (3 + 4 + line + 5), BODY and GAP in host.luau */
+/* lanes: card chrome matches HEAD (3 + 4 + line + 5), BODY (8 + 1) and GAP in host.luau */
 [data-surface="plugin.gitbutler.workspace"] .bp-lanes { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-lane { display: flex; flex-direction: column; padding-bottom: 8px; border: 1px solid transparent; border-top: 3px solid var(--lane); border-radius: 10px; background-color: var(--sf-card-bg); min-width: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-lane.bp-cur { border-color: var(--l3); border-top-color: var(--lane); }
@@ -81,7 +95,7 @@
 [data-surface="plugin.gitbutler.workspace"] .bp-chip { display: flex; align-items: center; padding: 1px var(--bp-cw); border-radius: 6px; background-color: var(--chip-bg); box-sizing: border-box; max-width: calc(var(--bp-cw) * 23); min-width: 0; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-chip > * { flex-shrink: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-chip > .bp-path { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-[data-surface="plugin.gitbutler.workspace"] .bp-chip.bp-sel { background-color: var(--l3); }
+[data-surface="plugin.gitbutler.workspace"] .bp-chip.bp-sel, [data-surface="plugin.gitbutler.workspace"] .bp-card.bp-sel { background-color: var(--l3); }
 [data-surface="plugin.gitbutler.workspace"] .bp-bh { display: flex; align-items: center; justify-content: space-between; gap: var(--bp-cw); margin-top: 4px; padding: 2px 4px; border-radius: 4px; }
 [data-surface="plugin.gitbutler.workspace"] .bp-bh-n { font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sc { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background-color: var(--sf-card-bg); border-top: 3px solid var(--lane); min-width: 0; }
@@ -119,3 +133,16 @@
 /* the title gives way first, so the id and "+N files" stay on screen */
 [data-surface="plugin.gitbutler.workspace"] .bp-sp-t > * { flex-shrink: 0; }
 [data-surface="plugin.gitbutler.workspace"] .bp-sp-t > .bp-t { flex-shrink: 1; min-width: 0; overflow: hidden; }
+
+/* board: one card per ROW (line + 4px, plus the 2px column gap) */
+[data-surface="plugin.gitbutler.workspace"] .bp-tools { display: flex; flex-wrap: wrap; flex-shrink: 0; gap: 2px var(--bp-cw); padding: 2px 0 4px; white-space: nowrap; }
+[data-surface="plugin.gitbutler.workspace"] .bp-btn { flex-shrink: 0; padding: 1px var(--bp-cw); border-radius: 6px; border: 1px solid var(--l3); background-color: var(--l1); color: var(--ink2); }
+[data-surface="plugin.gitbutler.workspace"] .bp-sheet-foot { display: flex; flex-shrink: 0; align-items: center; gap: calc(var(--bp-cw) * 2); white-space: nowrap; overflow: hidden; }
+[data-surface="plugin.gitbutler.workspace"] .bp-drop { border-style: dashed; border-color: var(--accent); background-color: transparent; color: var(--accent-ink); padding: 0 var(--bp-cw); }
+[data-surface="plugin.gitbutler.workspace"] .bp-cols > .bp-bcol { gap: 2px; flex-basis: calc(var(--bp-cw) * 32); }
+[data-surface="plugin.gitbutler.workspace"] .bp-colh { display: flex; align-items: center; gap: var(--bp-cw); height: var(--bp-row); white-space: nowrap; overflow: hidden; }
+[data-surface="plugin.gitbutler.workspace"] .bp-card { display: flex; align-items: center; gap: var(--bp-cw); height: calc(var(--sf-lh) + 4px); padding: 0 6px; border-radius: 6px; background-color: var(--l1); white-space: nowrap; overflow: hidden; }
+[data-surface="plugin.gitbutler.workspace"] .bp-card > .bp-ch { margin-right: 0; }
+[data-surface="plugin.gitbutler.workspace"] .bp-bcard { background-color: transparent; border-left: 3px solid var(--lane); border-radius: 2px; }
+[data-surface="plugin.gitbutler.workspace"] .bp-cfcard { margin-left: calc(var(--bp-cw) * 2); background-color: transparent; }
+[data-surface="plugin.gitbutler.workspace"] .bp-newcol { --lane: var(--l3); border-top-style: dashed; background-color: transparent; border-left: 1px dashed var(--l3); border-right: 1px dashed var(--l3); border-bottom: 1px dashed var(--l3); }

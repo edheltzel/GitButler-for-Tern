@@ -244,13 +244,14 @@ function gb.letter(change: string): string
 	return CHANGE[change] or string.upper(string.sub(change, 1, 1))
 end
 
--- How each `branchStatus` reads, and its tone.
+-- How each `branchStatus` reads, and its tone: the GitButler desktop app's
+-- branch labels ("Diverged" is its lite app's name for a force push).
 gb.STATUS_TEXT = {
-	completelyUnpushed = { "unpushed", "warning" },
-	unpushedCommits = { "unpushed commits", "warning" },
-	unpushedCommitsRequiringForce = { "needs force push", "error" },
-	nothingToPush = { "pushed", "success" },
-	integrated = { "integrated", "muted" },
+	completelyUnpushed = { "Unpushed branch", "warning" },
+	unpushedCommits = { "Some unpushed", "warning" },
+	unpushedCommitsRequiringForce = { "Diverged", "error" },
+	nothingToPush = { "Nothing to push", "success" },
+	integrated = { "Integrated", "accent" },
 } :: { [string]: { string } }
 
 return gb

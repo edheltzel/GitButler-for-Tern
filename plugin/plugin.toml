@@ -1,6 +1,6 @@
 schema = 1
 id = "gitbutler"
-name = "Butler Pane"
+name = "GitButler"
 version = "0.1.0"
 description = "GitButler workspaces in Tern: lanes, assignments, absorb, oplog, push, PR and land, all through `but`."
 icon = "git-branch"
@@ -12,12 +12,6 @@ styles = ["styles.css"]
 id = "workspace"
 title = "GitButler"
 # Opened by "Open GitButler workspace" (palette, status segment, new_git_block).
-palette = false
-
-[[blocks]]
-id = "diff"
-title = "GitButler diff"
-# Opened from the workspace block with a repo root and a `but` CLI id.
 palette = false
 
 # Lenses claim only reads. Exact oplog forms, not `but oplog -*`: that glob

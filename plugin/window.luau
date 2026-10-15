@@ -1,11 +1,8 @@
 --!strict
--- The window half: the status segment, the commands and keys that open
--- the workspace block, and the `gitbutler://` links the block opens.
 
 local gb = require("./gb")
 
 local WORKSPACE = "gitbutler.workspace"
-local DIFF = "gitbutler.diff"
 local OPEN = "plugin.gitbutler.open"
 local POLL_MS = 30 * 1000
 local STALE_MS = 3 * 1000
@@ -314,8 +311,9 @@ local tui_panes: { [string]: number } = {}
 
 tern.command({
 	id = "tui",
-	title = "GitButler: Open but tui",
+	title = "GitButler: Open TUI",
 	icon = "git-branch",
+	keys = { "cmd+alt+shift+t" },
 	run = function(cx: WindowCx)
 		local root = focused_root(cx)
 		local over = cx.session:focused()
@@ -349,7 +347,7 @@ tern.command({
 -- `but gui` opens the GitButler desktop app on this workspace and exits.
 tern.command({
 	id = "gui",
-	title = "GitButler: Open in GitButler app",
+	title = "GitButler: Open GUI",
 	icon = "git-branch",
 	run = function(cx: WindowCx)
 		local root = focused_root(cx)
@@ -421,22 +419,27 @@ tern.command({
 -- then hand it the action as a view event, so it runs on the block's
 -- selection with the block's confirmations. A block that is only now
 -- starting gets the event once its first view is up.
+-- No default chords: bind them in Tern's keybinds (`plugin.gitbutler.<id>`).
 local ACTIONS = {
-	{ "commit", "GitButler: Commit to a branch…", "cmd+alt+shift+c" },
-	{ "absorb", "GitButler: Absorb uncommitted changes", "cmd+alt+shift+a" },
-	{ "undo", "GitButler: Undo last operation", "cmd+alt+shift+z" },
-	{ "oplog", "GitButler: Restore from oplog…", nil },
-	{ "move", "GitButler: Move selection to a branch…", nil },
-	{ "reword", "GitButler: Reword commit / rename branch…", nil },
-	{ "branch", "GitButler: New parallel branch…", nil },
-	{ "stack", "GitButler: New stacked branch…", nil },
-	{ "apply", "GitButler: Apply a branch…", nil },
-	{ "unapply", "GitButler: Unapply selected stack…", nil },
-	{ "push", "GitButler: Push selected branch…", "cmd+alt+shift+p" },
-	{ "pr", "GitButler: Open pull request…", nil },
-	{ "land", "GitButler: Land selected branch…", nil },
-	{ "view", "GitButler: Switch workspace view", nil },
-	{ "pull", "GitButler: Pull upstream into applied branches…", nil },
+	{ "commit", "GitButler: Commit to a branch…" },
+	{ "absorb", "GitButler: Absorb uncommitted changes" },
+	{ "undo", "GitButler: Undo last operation" },
+	{ "redo", "GitButler: Redo last undone operation" },
+	{ "oplog", "GitButler: Restore from oplog…" },
+	{ "move", "GitButler: Move selection to a branch…" },
+	{ "reword", "GitButler: Reword commit / rename branch…" },
+	{ "branch", "GitButler: New parallel branch…" },
+	{ "stack", "GitButler: New stacked branch…" },
+	{ "apply", "GitButler: Apply a branch…" },
+	{ "unapply", "GitButler: Unapply selected stack…" },
+	{ "push", "GitButler: Push selected branch…" },
+	{ "pr", "GitButler: Open pull request…" },
+	{ "land", "GitButler: Land selected branch…" },
+	{ "view", "GitButler: Switch workspace view" },
+	{ "pull", "GitButler: Pull upstream into applied branches…" },
+	{ "uncommit", "GitButler: Uncommit selected commit or file…" },
+	{ "discard", "GitButler: Discard selection…" },
+	{ "help", "GitButler: Show workspace keys" },
 }
 
 local function send_action(cx: WindowCx, pane: number, act: string)
@@ -444,12 +447,11 @@ local function send_action(cx: WindowCx, pane: number, act: string)
 end
 
 for _, a in ACTIONS do
-	local act, title, key = a[1] :: string, a[2] :: string, a[3]
+	local act, title = a[1], a[2]
 	tern.command({
 		id = act,
 		title = title,
 		icon = "git-branch",
-		keys = if key then { key :: string } else nil,
 		run = function(cx: WindowCx)
 			local root = focused_root(cx)
 			if root == nil then
@@ -514,58 +516,4 @@ tern.on("focus", function(ev: FocusEvent, cx: WindowCx)
 end)
 tern.on("pane_closed", function(ev: PaneEvent, _cx: WindowCx)
 	warned[ev.pane] = nil
-end)
-
--- `gitbutler://diff?root=…&id=…&label=…`, opened by the workspace block.
-local function unescape(s: string): string
-	return (string.gsub(s, "%%(%x%x)", function(h: string): string
-		return string.char(tonumber(h, 16) :: number)
-	end))
-end
-
-local function query(url: string): { [string]: string }
-	local out: { [string]: string } = {}
-	local q = string.match(url, "%?(.*)$") or ""
-	for k, v in string.gmatch(q, "([^&=]+)=([^&]*)") do
-		out[k] = unescape(v)
-	end
-	return out
-end
-
-tern.route.link(function(link: LinkRequest, cx: WindowCx): RouteDecision?
-	if string.sub(link.url, 1, 16) ~= "gitbutler://diff" then
-		return nil
-	end
-	local q = query(link.url)
-	if q.root == nil or q.id == nil then
-		return { handled = true }
-	end
-	local args = { q.root, q.id, q.label or q.id }
-	-- One diff pane per tab, replaced in place (split it, close the old
-	-- one); focus stays where the link came from so the workspace keeps
-	-- the keys.
-	local from = link.pane or cx.session:focused()
-	local tab = if from then cx.session:tab_of(from) else nil
-	local old: number? = nil
-	for _, pane in cx.session:panes() do
-		if pane.block == DIFF and tab and cx.session:tab_of(pane.pane) == tab then
-			old = pane.pane
-			break
-		end
-	end
-	local opened: number? = nil
-	if old then
-		opened = cx.layout:split(old, "down", { block = DIFF, args = args })
-		if opened then
-			cx.layout:close(old)
-		end
-	else
-		opened = cx:new_block(DIFF, args, "beside")
-	end
-	if opened == nil then
-		cx:toast("error", "GitButler diff block is not loaded on this host")
-	elseif from then
-		cx.layout:focus(from)
-	end
-	return { handled = true }
 end)
