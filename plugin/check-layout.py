@@ -13,6 +13,7 @@ bootstrap = "local sources = {\n" + "\n".join(
 checks = r'''
 local blocks, modules, fixture = {}, {}, nil
 local calls = {}
+local pending_status, timers, replies, forced = nil, {}, nil, nil
 local pane = 0
 local root = "/fixture"
 local ui = {}
@@ -41,10 +42,21 @@ local tern = {
     pane = { list = function() return { { pane = pane } } end },
     process = { run = function(argv, _, done)
         table.insert(calls, table.clone(argv))
+        if pending_status and argv[4] == "status" then
+            table.insert(pending_status, done)
+            return
+        end
+        if replies then
+            local key = if argv[4] == "pull" and argv[5] == "--check" then "check" else argv[4]
+            forced = replies[key]
+        end
         done({ stdout = "{}", stderr = "", status = 0 })
     end },
-    json = { decode = function() return fixture end, encode = function(data) return tostring(data) end },
-    timer = function() return { cancel = function() end } end,
+    json = { decode = function() return if forced ~= nil then forced else fixture end, encode = function(data) return tostring(data) end },
+    timer = function(_, done)
+        table.insert(timers, done)
+        return { cancel = function() end }
+    end,
     kv = { get = function() return "lanes" end, set = function() end },
 }
 local env = setmetatable({ tern = tern }, { __index = getfenv() })
@@ -157,11 +169,22 @@ local function has_class(node, name)
     for token in string.gmatch(class, "%S+") do if token == name then return true end end
     return false
 end
-local function height(node)
+local function controls_height(node, cols, gap)
+    local rows, used = 1, 0
+    for _, child in node.c or {} do
+        local cells = width.cells((child.p or {}).text or "") + 3
+        if used > 0 and used + cells > cols then rows += 1; used = 0 end
+        used += cells
+    end
+    return rows * 21 + (rows - 1) * gap
+end
+local function height(node, cols)
     local kids, sum = node.c or {}, 0
-    for _, child in kids do sum += height(child) end
+    for _, child in kids do sum += height(child, cols) end
     if node.k == "kv" then return #(node.p.items) * 17 + 6 end
-    if has_class(node, "bp-top") then return if has_class(node, "bp-top2") then 58 else 29 end
+    if has_class(node, "bp-tabs") or has_class(node, "bp-stats") then return controls_height(node, cols, 8) end
+    if has_class(node, "bp-top") then return if has_class(node, "bp-top2") then sum + 16 else 29 end
+    if has_class(node, "bp-tools") then return controls_height(node, cols, 2) + 18 end
     if has_class(node, "bp-colh") then return 23 end
     if has_class(node, "bp-card") then return 21 end
     if has_class(node, "bp-bcol") then return sum + 19 + math.max(0, #kids - 1) * 2 end
@@ -399,9 +422,9 @@ for _, view in { "lanes", "graph" } do
                 local result = workspace.view(state, cx)
                 local dock = dock_height(result, cx)
                 local split = result.main.c[2]
-                local left, detail = height(split.c[1]), height(split.c[2])
+                local left, detail = height(split.c[1], cx.cols), height(split.c[2], cx.cols)
                 local drawn = if cols < 110 then left + detail else math.max(left, detail)
-                local available = rows * 17 - height(result.main.c[1]) - 32 - dock
+                local available = rows * 17 - height(result.main.c[1], cx.cols) - 32 - dock
                 check(drawn <= available, view .. " " .. cols .. "x" .. rows .. " " .. row.kind
                     .. ": needs " .. drawn .. "px, only " .. available .. "px available")
             end
@@ -501,6 +524,150 @@ do
         "reload used a snapshot cliId (" .. table.concat(diff_ids, ",") .. ")")
 end
 do
+    -- A plain render must not re-resolve. Closing waits for a status rebuild.
+    local state, cx = init("lanes", 78, 40, 5)
+    workspace.event(state, { ev = "action", act = "open", value = row_key(state, "c-c5") }, cx)
+    fixture = { uncommittedChanges = {}, stacks = {} }
+    workspace.view(state, cx)
+    check(state.diff ~= nil and state.diff.bind == "c\0change5", "a plain render re-resolved the diff")
+end
+do
+    -- Squash into the open commit changes its title and its patch. The header
+    -- follows the title; the patch must reload by changeId, not the new cliId.
+    local state, cx = init("lanes", 78, 40, 5)
+    workspace.event(state, { ev = "action", act = "open", value = row_key(state, "c-c5") }, cx)
+    local before = command_count("diff")
+    local rewritten = status(5)
+    for _, c in rewritten.stacks[1].branches[1].commits do
+        if c.changeId == "change5" then
+            c.cliId = "c9"
+            c.message = "Squashed title\nbody"
+        end
+    end
+    fixture = rewritten
+    timers[#timers]()
+    local header = false
+    visit(workspace.view(state, cx).main, function(node)
+        if (node.p or {}).text == "c9 Squashed title" then header = true end
+    end)
+    local last
+    for _, argv in calls do if argv[4] == "diff" then last = argv[5] end end
+    check(header and command_count("diff") == before + 1 and last == "change5",
+        "a rebuilt title left the patch stale or reloaded cliId " .. tostring(last) .. " (diffs " .. before .. "->" .. command_count("diff") .. ", header " .. tostring(header) .. ")")
+end
+for _, target in { "c-c5", "cf-5:1", "f-u1", "b-b1" } do
+    for _, outcome in { "unchanged", "renumbered", "removed", "failure", "timeout", "invalid", "cancelled", "sheet", "busy", "closed", "repeated" } do
+        local state, cx = init("lanes", 78, 40, 5)
+        workspace.event(state, { ev = "action", act = "open", value = row_key(state, target) }, cx)
+        local original = state.diff
+        local diffs, statuses = command_count("diff"), command_count("status")
+        pending_status = {}
+        timers[#timers]()
+        workspace.key(state, { name = "r", text = "r" }, cx)
+        if outcome == "repeated" then workspace.key(state, { name = "r", text = "r" }, cx) end
+        check(#pending_status == 1 and command_count("status") == statuses + 1 and command_count("diff") == diffs,
+            target .. ": reload must join the poll before reading a patch")
+        if outcome == "renumbered" then
+            fixture = status(5)
+            fixture.stacks[1].branches[1].cliId = "other-branch"
+            fixture.uncommittedChanges[1].cliId = "other-file"
+            for _, c in fixture.stacks[1].branches[1].commits do c.cliId = "other-" .. c.cliId end
+        elseif outcome == "removed" then
+            fixture = { uncommittedChanges = {}, stacks = {} }
+        elseif outcome == "invalid" then
+            fixture = nil
+        elseif outcome == "cancelled" then
+            state.reads += 1
+        elseif outcome == "sheet" then
+            state.sheet = { kind = "help", title = "GitButler keys" }
+        elseif outcome == "busy" then
+            state.busy = "Checking changes…"
+        elseif outcome == "closed" then
+            workspace.key(state, { name = "escape" }, cx)
+        end
+        local done = pending_status[1]
+        pending_status = nil
+        done({ stdout = "{}", stderr = "status failed", status = if outcome == "failure" then 1 else 0,
+            timed_out = outcome == "timeout" })
+        local reloads = if outcome == "repeated" then 2 elseif outcome == "unchanged" or outcome == "renumbered" then 1 else 0
+        check(command_count("diff") == diffs + reloads,
+            target .. ": poll completion lost or incorrectly ran the " .. outcome .. " reload")
+        if reloads > 0 then
+            check(state.diff == original and state.diff.gen == 1 + reloads,
+                target .. ": the joined reload lost its diff")
+            local last
+            for _, argv in calls do if argv[4] == "diff" then last = argv[5] end end
+            check(last == original.id, target .. ": the joined reload changed its stable selector")
+        elseif outcome == "removed" or outcome == "closed" then
+            check(state.diff == nil, target .. ": a removed or closed target was reopened")
+        end
+        local before = command_count("diff")
+        if outcome == "invalid" then fixture = status(5) end
+        if outcome == "sheet" then state.sheet = nil end
+        if outcome == "busy" then state.busy = nil end
+        timers[#timers]()
+        check(command_count("diff") == before, target .. ": a completed reload leaked into the next poll")
+    end
+end
+do
+    -- A status read can snapshot the worktree before pull and deliver after
+    -- pull clears busy. The result must wait for a read started after pull.
+    local function encode(v)
+        local t = type(v)
+        if t == "string" then return string.format("%q", v)
+        elseif t == "number" or t == "boolean" then return tostring(v)
+        elseif t == "nil" then return "null"
+        elseif t ~= "table" then return string.format("%q", tostring(v)) end
+        if #v > 0 then
+            local parts = {}
+            for i = 1, #v do parts[i] = encode(v[i]) end
+            return "[" .. table.concat(parts, ",") .. "]"
+        end
+        local parts = {}
+        for k, val in v do table.insert(parts, string.format("%q", tostring(k)) .. ":" .. encode(val)) end
+        table.sort(parts)
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    local state, cx = init("lanes", 78, 40, 1)
+    pending_status = {}
+    timers[#timers]()
+    local pre = pending_status[1]
+    pending_status = {}
+    local saved = tern.json.encode
+    tern.json.encode = encode
+    replies = {
+        check = {
+            upToDate = false,
+            upstreamCommits = { count = 2 },
+            baseBranch = { name = "main", remoteName = "origin", baseSha = "aaa", currentSha = "bbb" },
+            hasWorktreeConflicts = false,
+            branchStatuses = { { name = "feature", status = "unpushed", rebasable = true } },
+        },
+        pull = { status = "completed" },
+    }
+    workspace.key(state, { name = "f", text = "f" }, cx)
+    workspace.key(state, { name = "y", text = "y" }, cx)
+    replies, forced = nil, nil
+    fixture = status(1)
+    pre({ stdout = "{}", stderr = "", status = 0 })
+    local early = state.notice and state.notice.text or ""
+    check(state.notice == nil and #pending_status == 1,
+        "pull used a pre-mutation status (" .. early .. "); follow-up reads " .. #pending_status)
+    if #pending_status == 1 then
+        local post = status(1)
+        post.conflictedFiles = { "src/conflicted.txt" }
+        fixture = post
+        pending_status[1]({ stdout = "{}", stderr = "", status = 0 })
+    end
+    local text = state.notice and state.notice.text or ""
+    check(state.notice ~= nil and state.notice.tone == "warning" and string.find(text, "src/conflicted.txt", 1, true) ~= nil
+        and string.find(text, "Pulled main", 1, true) == 1,
+        "pull notice ignored the post-pull conflict (" .. tostring(state.notice and state.notice.tone) .. " " .. text .. ")")
+    tern.json.encode = saved
+    pending_status = nil
+    forced = nil
+end
+do
     -- An unnamed branch has no bind. The first render keeps it; the next refresh closes it.
     local function unnamed(change_id, message, seg)
         return {
@@ -573,8 +740,8 @@ do
             local result = workspace.view(state, cx)
             local dock = dock_height(result, cx)
             local split = result.main.c[2]
-            local left, detail = height(split.c[1]), height(split.c[2])
-            local room = cx.rows * 17 - 58 - 32 - dock
+            local left, detail = height(split.c[1], cx.cols), height(split.c[2], cx.cols)
+            local room = cx.rows * 17 - height(result.main.c[1], cx.cols) - 32 - dock
             if left + detail > room and overflow == nil then
                 overflow = view .. " " .. row.key .. ": detail " .. detail .. "px exceeds the " .. (room - left) .. "px the list left"
             end
@@ -735,13 +902,13 @@ local function check_board(state, cx, browsing)
     local board = result.main.c[2]
     local columns = board.c[2].c
     local per_line = math.max(1, cx.cols // 34)
-    local drawn = 39
+    local drawn = height(board.c[1], cx.cols)
     for i = 1, #columns, per_line do
         local line = 0
-        for j = i, math.min(#columns, i + per_line - 1) do line = math.max(line, height(columns[j])) end
+        for j = i, math.min(#columns, i + per_line - 1) do line = math.max(line, height(columns[j], cx.cols)) end
         drawn += line + (if i == 1 then 0 else 8)
     end
-    local available = cx.rows * 17 - height(result.main.c[1]) - 32 - dock_height(result, cx)
+    local available = cx.rows * 17 - height(result.main.c[1], cx.cols) - 32 - dock_height(result, cx)
     check(drawn <= available, "board " .. cx.cols .. "x" .. cx.rows .. ": needs " .. drawn .. "px, only " .. available .. "px available")
     if not browsing then
         check(positions(result.main)[state.cursor] ~= nil, "board: keyboard cursor is outside the visible columns/cards")
