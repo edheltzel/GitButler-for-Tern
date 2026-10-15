@@ -83,9 +83,9 @@ Use **↑** and **↓** to select `b.txt`, then press **⏎**.
 
 You should see the diff open inside the workspace block, in place of the lanes, showing the new line `+hello`. Press **Esc**, **Backspace** or **q**, or click **← Back**, to return to the lanes. A view tab returns directly to that view. Then press **⏎** on another row to see its diff.
 
-While the diff is open, workspace action keys such as **c** and **p** are inactive. Return to the list first, or use a palette action, which returns to the list and acts on its selection. **r** reloads the patch and workspace; the diff closes when its target disappears from the workspace.
+While the diff is open, workspace action keys such as **c** and **p** are inactive. Return to the list first, or use a palette action, which returns to the list and acts on its selection. **r** refreshes the workspace before reloading the patch. File, commit and named-branch diffs follow their target across CLI id changes and close when a status refresh no longer finds it.
 
-Rows without a stable diff target show a warning. This includes unnamed branches, paths containing `:`, and commits or committed files without a change id.
+Unnamed branches open a diff for the current snapshot; it closes when a refresh detects a workspace change or a manual **r** refresh succeeds. Paths containing `:` and commits or committed files without a change id show a warning instead.
 
 ![The diff inside the workspace block, under its tabs and sync chips](docs/images/diff.png)
 
@@ -139,7 +139,7 @@ In this tutorial, you:
 - The **board** view works like the GitButler desktop app, with the mouse. Tern blocks can't drag, so you click what you want to move, then click where it goes:
   - Click a file, or tick the boxes of several, and the branches show **Commit here**, each commit shows **Amend**, and the New branch column offers **Commit to a new branch**.
   - Click a commit and other commits show **Squash** and **Above** (reorder), branches show **Move here**, and the Uncommitted column shows **Uncommit**. A committed file can **Move in** to another commit.
-  - Use the toolbar's **←** / **→** buttons to browse columns and click **↑ N more** / **↓ N more** to browse cards. Short columns put **↑** / **↓** in the header when a marker cannot fit. These controls keep your selected change and checked files held while you reach another destination, including Uncommitted and New branch.
+  - Use the toolbar's **←** / **→** buttons to browse columns and click **↑ N more** / **↓ N more** to browse cards. Short columns put **↑** / **↓** in the header when a marker cannot fit. When no cards fit, columns show only their headers; enlarge the pane or clear a notice with **r** to make room. Browsing keeps your selected change and checked files held while you reach another destination, including Uncommitted and New branch.
   - Right-click any card for its actions (commit, reword, push, PR, uncommit, discard, …). The toolbar has Commit, Absorb, New branch, Pull, Undo, Redo, Oplog and Discard.
   - Actions use the same prompts and confirmation guards as the keyboard and palette; confirmation sheets show the exact `but` command. Anything that rewrites pushed history or deletes work asks for **y**. See the action reference in [DESIGN.md](DESIGN.md) for each operation's confirmation rules.
 
