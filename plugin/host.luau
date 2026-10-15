@@ -455,21 +455,33 @@ local function sync_chips(state: State, model: gb.Model): { { string } }
 	return out
 end
 
--- Cells the five tabs take ("1 Lanes" … "5 Board", 2 cells of padding and a
--- 1-cell gap each); the chips add their text plus 3 cells each.
-local TAB_CELLS = 54
+local TAB_LABELS = { "1 Lanes", "2 Graph", "3 Stacks", "4 Branches", "5 Board" }
 
--- The top bar is one row when tabs and chips fit the pane, else two.
+local function control_rows(state: State, labels: { string }): number
+	local available = math.max(1, state.cx.cols)
+	local rows, used = 1, 0
+	for _, label in labels do
+		local cells = width.cells(label) + 3
+		if used > 0 and used + cells > available then
+			rows += 1
+			used = 0
+		end
+		used += cells
+	end
+	return rows
+end
+
 local function top_rows(state: State): number
 	local model = state.model
 	if model == nil then
 		return 1
 	end
-	local cells = TAB_CELLS
+	local chips, all = {}, table.clone(TAB_LABELS)
 	for _, c in sync_chips(state, model) do
-		cells += width.cells(c[1]) + 3
+		table.insert(chips, c[1])
+		table.insert(all, c[1])
 	end
-	return if cells <= state.cx.cols - 12 then 1 else 2
+	return if control_rows(state, all) == 1 then 1 else control_rows(state, TAB_LABELS) + control_rows(state, chips)
 end
 
 -- Pane height minus the top bar, one card head, pads and the dock.
@@ -1358,8 +1370,6 @@ local function settle_cursor(state: State)
 	end
 end
 
-local VIEW_NAMES: { [string]: string } = { lanes = "Lanes", graph = "Graph", stacks = "Stacks", branches = "Branches", board = "Board" }
-
 -- Shows `view` (closing a diff), remembered for new blocks.
 local function set_view(state: State, view: string)
 	state.view = view
@@ -1382,7 +1392,7 @@ local function top_bar(state: State, model: gb.Model): Node
 		local on = v == state.view and state.diff == nil
 		table.insert(tabs, ui.el("button", {
 			class = "bp-btn bp-tab" .. (if on then " bp-on" else ""),
-			text = i .. " " .. VIEW_NAMES[v],
+			text = TAB_LABELS[i],
 			actions = { click = "view=" .. v },
 		}, {}))
 	end
@@ -1395,7 +1405,7 @@ local function top_bar(state: State, model: gb.Model): Node
 		table.insert(chips, ui.el(if c[3] then "button" else "span", p, {}))
 	end
 	local stats, row = el("bp-stats", chips), el("bp-tabs", tabs)
-	if top_rows(state) == 2 then
+	if top_rows(state) > 1 then
 		return el("bp-top bp-top2", { stats, row }, { key = "top" })
 	end
 	return el("bp-top", { row, stats }, { key = "top" })
@@ -2968,6 +2978,10 @@ end
 -- is what moves, and every card that can take it shows drop buttons. Cards
 -- are one row (ROW px with the 2px column gap).
 local BOARD_TOOLS = LH + 22 -- toolbar buttons, padding, the gap below
+local BOARD_ACTIONS = {
+	{ "Commit", "do=c" }, { "Absorb", "do=A" }, { "New branch", "do=n" }, { "Pull", "do=f" },
+	{ "Undo", "do=z" }, { "Redo", "do=redo" }, { "Oplog", "do=O" }, { "Discard…", "do=discard" },
+}
 local COL_CHROME = 3 + 16 + ROW + 2 -- top edge, padding, column head, its gap
 
 local function held_key(state: State): string
@@ -3067,7 +3081,11 @@ local function board_view(state: State, model: gb.Model): Node
 
 	-- Columns wrap (CSS) about every 34 cells and wrapped rows share the height.
 	local per_line = math.max(1, state.cx.cols // 34)
-	local budget = list_px(state) + HEAD + BODY - BOARD_TOOLS
+	local tool_labels = { "←", "→" }
+	for _, action in BOARD_ACTIONS do
+		table.insert(tool_labels, action[1])
+	end
+	local budget = list_px(state) + HEAD + BODY - BOARD_TOOLS - (control_rows(state, tool_labels) - 1) * ROW
 	local col_lines = math.min(math.ceil((#state.lanes + 1) / per_line), math.max(1, (budget + 8) // (COL_CHROME + 3 * ROW + 8)))
 	local capacity = per_line * col_lines
 	local anchor = state.rows[index_of(state, state.viewport)]
@@ -3135,19 +3153,14 @@ local function board_view(state: State, model: gb.Model): Node
 		table.insert(cols, el("bp-sc bp-bcol bp-newcol", new, { key = "new" }))
 	end
 
-	local tools = el("bp-tools", {
+	local tools = {
 		button("←", "browse=L" .. math.max(1, first - 1)),
 		button("→", "browse=L" .. math.min(#state.lanes + 1, last + 1)),
-		button("Commit", "do=c"),
-		button("Absorb", "do=A"),
-		button("New branch", "do=n"),
-		button("Pull", "do=f"),
-		button("Undo", "do=z"),
-		button("Redo", "do=redo"),
-		button("Oplog", "do=O"),
-		button("Discard…", "do=discard"),
-	}, { key = "tools" })
-	return ui.col({ tools, el("bp-cols", cols, { key = "cols" }) })
+	}
+	for _, action in BOARD_ACTIONS do
+		table.insert(tools, button(action[1], action[2]))
+	end
+	return ui.col({ el("bp-tools", tools, { key = "tools" }), el("bp-cols", cols, { key = "cols" }) })
 end
 
 local ACTIONS: { [string]: (State) -> () } = {
