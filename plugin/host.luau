@@ -60,6 +60,10 @@ type State = {
 	list_budget: number?,
 	marked: { [string]: boolean }, -- uncommitted file paths, not CLI ids
 	loading: boolean,
+	read_token: number, -- reads value of the in-flight status read
+	refresh_callbacks: { (any) -> () },
+	refresh_wait: { (any) -> () }, -- need a read started at the current reads
+	refresh_again: boolean,
 	fetched: number?,
 	problem: string?,
 	timer: TimerHandle?,
@@ -80,6 +84,7 @@ type DiffState = {
 	problem: string?,
 	gen: number, -- reloads started before this are dropped
 	kind: string,
+	bind: string?, -- changeId, changeId+path, path, or branch name; nil if unnamed
 }
 
 local running: { [number]: State } = {}
@@ -117,6 +122,52 @@ local function load_diff(d: DiffState)
 	if err then
 		d.problem = err
 	end
+end
+
+-- CLI ids are snapshot-local and get reused. The diff follows this instead.
+local function diff_bind(row: Row): string?
+	if row.kind == "commit" and row.changeId and row.changeId ~= "" then
+		return "c\0" .. row.changeId
+	elseif row.kind == "cfile" and row.changeId and row.changeId ~= "" and row.path then
+		return "f\0" .. row.changeId .. "\0" .. row.path
+	elseif row.kind == "file" and row.path then
+		return "u\0" .. row.path
+	elseif row.kind == "branch" and row.branch and row.branch ~= "" then
+		return "b\0" .. row.branch
+	end
+	return nil
+end
+
+-- Retarget an open diff after a status read. No cliId-key fallback: an unbound
+-- diff (an unnamed branch) closes on this refresh, not on the first render.
+local function follow_diff(state: State): DiffState?
+	local d = state.diff
+	if d == nil then
+		return nil
+	end
+	local row: Row? = nil
+	if d.bind then
+		for _, r in state.rows do
+			if diff_bind(r) == d.bind then
+				row = r
+				break
+			end
+		end
+	end
+	if row == nil then
+		state.diff = nil
+		return nil
+	end
+	local next = if row.kind == "commit" then row.id .. " " .. row.label else row.label
+	-- The commit header leads with the snapshot cliId. A title change is a
+	-- new patch; a cliId-only change is not. Reload by the stable id.
+	local previous = if row.kind == "commit" then string.match(d.label, "^%S+ (.*)$") else d.label
+	local retitle = if row.kind == "commit" then previous ~= row.label else previous ~= next
+	d.label = next
+	if retitle then
+		load_diff(d)
+	end
+	return d
 end
 
 local function diff_nodes(d: DiffState): { Node }
@@ -247,6 +298,7 @@ local function build_rows(state: State)
 	if state.view ~= "board" or not found or (not anchored and not (lane and lane >= 1 and lane <= #lanes + 1)) then
 		state.viewport = state.cursor
 	end
+	follow_diff(state)
 end
 
 local function index_of(state: State, key: string?): number
@@ -268,24 +320,65 @@ local function refresh(state: State, after: ((any) -> ())?)
 	if not alive(state) then
 		return
 	end
-	if state.loading or state.sheet ~= nil or state.busy ~= nil then
+	if state.sheet ~= nil or state.busy ~= nil then
 		if after then
 			after(nil)
 		end
 		return
 	end
+	-- Join only a read started at the current `reads`. A mutation bumps
+	-- `reads` first, so a status that snapshotted the pre-mutation worktree
+	-- cannot be handed to its result.
+	if state.loading and state.read_token == state.reads then
+		if after then
+			table.insert(state.refresh_callbacks, after)
+		end
+		return
+	end
+	if state.loading then
+		if after then
+			table.insert(state.refresh_wait, after)
+		else
+			state.refresh_again = true
+		end
+		return
+	end
+	if after then
+		table.insert(state.refresh_callbacks, after)
+	end
 	state.loading = true
+	state.read_token = state.reads
 	local token = state.reads
+	local function finish(data: any)
+		state.loading = false
+		local callbacks = state.refresh_callbacks
+		state.refresh_callbacks = {}
+		for _, callback in callbacks do
+			callback(data)
+		end
+	end
+	local function pump()
+		local waiters = state.refresh_wait
+		state.refresh_wait = {}
+		local again = state.refresh_again
+		state.refresh_again = false
+		if #waiters > 0 then
+			refresh(state, waiters[1])
+			for i = 2, #waiters do
+				refresh(state, waiters[i])
+			end
+		elseif again then
+			refresh(state)
+		end
+	end
 	local err = gb.run(state.root, { "status", "-f", "--json" }, READ_TIMEOUT_MS, function(r: gb.Result)
 		if not alive(state) then
 			return
 		end
-		state.loading = false
 		if token ~= state.reads or state.sheet ~= nil or state.busy ~= nil then
-			if after then
-				after(nil)
-			end
+			finish(nil)
 			state.cx:render()
+			pump()
 			return
 		end
 		local model = if r.ok then gb.model(r.data) else nil
@@ -301,17 +394,13 @@ local function refresh(state: State, after: ((any) -> ())?)
 				build_rows(state)
 			end
 		end
-		if after then
-			after(if model then r.data else nil)
-		end
+		finish(if model then r.data else nil)
 		state.cx:render()
 	end)
 	if err then
-		state.loading = false
 		state.problem = err
-		if after then
-			after(nil)
-		end
+		finish(nil)
+		pump()
 	end
 end
 
@@ -357,6 +446,10 @@ local TOP = 29 -- .bp-btn is 21px (1px border + 1px padding + line + 1px padding
 
 local KEYS_HELP = "↑↓ move  ←→ lanes  ⏎ diff  space mark  c commit  m move  A absorb  e reword  n/N branch  a/u apply/unapply  z undo  O oplog  p push  P PR  L land  f pull  v/1-5 view  ? help"
 
+local function keys_help(state: State): string
+	return if state.view == "board" and state.cx.cols < 68 then "↑↓ move  ←→ lanes  ⏎ diff  ? help" else KEYS_HELP
+end
+
 local PICK_FOOT = "↑↓ choose  ⏎ ok  1-9 pick  q/esc cancel"
 
 -- Lines `text` takes in the dock: its own lines, each wrapped at the pane
@@ -397,7 +490,7 @@ local function dock_px(state: State): number
 	for _, part in status_parts(state) do
 		status ..= part[1]
 	end
-	local n = wrapped(state, status) + wrapped(state, KEYS_HELP)
+	local n = wrapped(state, status) + wrapped(state, keys_help(state))
 	if state.notice then
 		n += wrapped(state, state.notice.text)
 	end
@@ -1301,7 +1394,7 @@ local function dock_view(state: State): Node
 	if state.problem and state.model then
 		table.insert(lines, ui.text({ ui.span(state.problem, "warning") }))
 	end
-	table.insert(lines, ui.text({ ui.span(KEYS_HELP, "dim") }))
+	table.insert(lines, ui.text({ ui.span(keys_help(state), "dim") }))
 	return ui.col({ ui.lines(lines) })
 end
 
@@ -1444,6 +1537,10 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 	end
 	local argv = table.clone(args)
 	table.insert(argv, "--json")
+	-- but 0.22.3 releases the status write guard before it writes JSON, so a
+	-- read started before this mutation can deliver a pre-mutation snapshot
+	-- after `busy` clears. Drop it; the result waits for a later read.
+	state.reads += 1
 	state.busy = label
 	state.notice = nil
 	state.cx:toast("info", label, command_line(args))
@@ -1995,19 +2092,21 @@ local function open_diff(state: State)
 		return
 	end
 	local ref = diff_ref(row)
-	if ref == nil then
+	local unnamed = row.kind == "branch" and (row.branch == nil or row.branch == "")
+	if ref == nil and not unnamed then
 		notify(state, "warning", "That row has no safe, stable diff target.")
 		return
 	end
 	local d: DiffState = {
 		cx = state.cx,
 		root = state.root,
-		id = ref,
+		id = ref or row.id,
 		label = if row.kind == "commit" then row.id .. " " .. row.label else row.label,
 		changes = nil,
 		problem = nil,
 		gen = 0,
 		kind = row.kind,
+		bind = diff_bind(row),
 	}
 	state.diff = d
 	load_diff(d)
@@ -2979,7 +3078,7 @@ local BOARD_ACTIONS = {
 	{ "Commit", "do=c" }, { "Absorb", "do=A" }, { "New branch", "do=n" }, { "Pull", "do=f" },
 	{ "Undo", "do=z" }, { "Redo", "do=redo" }, { "Oplog", "do=O" }, { "Discard…", "do=discard" },
 }
-local COL_CHROME = 3 + 16 + ROW + 2 -- top edge, padding, column head, its gap
+local COL_CHROME = 3 + 16 + ROW
 
 local function held_key(state: State): string
 	local paths: { string } = {}
@@ -3108,7 +3207,7 @@ local function board_view(state: State, model: gb.Model): Node
 		if down then
 			table.insert(kids, button("↓ " .. (#rows - hi) .. " more", "browse=" .. rows[hi + 1].key))
 		end
-		if #rows == 0 then
+		if #rows == 0 and room > 0 then
 			table.insert(kids, sp(empty, "bp-dim"))
 		end
 		return el("bp-sc bp-bcol " .. lane_class(lane), kids, { key = "L" .. lane })
@@ -3140,12 +3239,14 @@ local function board_view(state: State, model: gb.Model): Node
 	end
 	if last > #state.lanes then
 		local new: { Node } = { el("bp-colh", { sp("New branch", "bp-lh-n") }) }
-		if held == "files" then
-			table.insert(new, drop("Commit to a new branch", "newcommit", ""))
-		elseif held == "commit" or held == "cfile" then
-			table.insert(new, drop("Move to a new branch", "newmove", ""))
-		else
-			table.insert(new, button("+ Create branch", "do=n"))
+		if room > 0 then
+			if held == "files" then
+				table.insert(new, drop("Commit to a new branch", "newcommit", ""))
+			elseif held == "commit" or held == "cfile" then
+				table.insert(new, drop("Move to a new branch", "newmove", ""))
+			else
+				table.insert(new, button("+ Create branch", "do=n"))
+			end
 		end
 		table.insert(cols, el("bp-sc bp-bcol bp-newcol", new, { key = "new" }))
 	end
@@ -3330,6 +3431,10 @@ tern.block.define("workspace", {
 			list_budget = nil,
 			marked = {},
 			loading = false,
+			read_token = 0,
+			refresh_callbacks = {},
+			refresh_wait = {},
+			refresh_again = false,
 			fetched = nil,
 			problem = if gb.root(root) then nil else "Not a GitButler workspace: " .. root,
 			timer = nil,
@@ -3374,16 +3479,6 @@ tern.block.define("workspace", {
 		local main: { Node } = { top_bar(state, model) }
 		local sheet = sheet_view(state)
 		local diff = state.diff
-		if diff then
-			local found = false
-			for _, r in state.rows do
-				found = found or (r.kind == diff.kind and diff_ref(r) == diff.id)
-			end
-			if not found then
-				-- the shown file or commit is gone (committed, moved, rewritten)
-				state.diff, diff = nil, nil
-			end
-		end
 		if sheet then
 			table.insert(main, sheet)
 		elseif diff then
@@ -3437,8 +3532,12 @@ tern.block.define("workspace", {
 			if key.name == "escape" or key.name == "backspace" or k == "q" then
 				state.diff = nil
 			elseif k == "r" then
-				load_diff(state.diff :: DiffState)
-				refresh(state)
+				refresh(state, function(data)
+					local d = if data then follow_diff(state) else nil
+					if d then
+						load_diff(d)
+					end
+				end)
 			elseif k == "v" then
 				cycle_view(state)
 			else
