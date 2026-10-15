@@ -3081,7 +3081,7 @@ local BOARD_ACTIONS = {
 	{ "Commit", "do=c" }, { "Absorb", "do=A" }, { "New branch", "do=n" }, { "Pull", "do=f" },
 	{ "Undo", "do=z" }, { "Redo", "do=redo" }, { "Oplog", "do=O" }, { "Discard…", "do=discard" },
 }
-local COL_CHROME = 3 + 16 + ROW + 2 -- top edge, padding, column head, its gap
+local COL_CHROME = 3 + 16 + ROW
 
 local function held_key(state: State): string
 	local paths: { string } = {}
@@ -3192,11 +3192,6 @@ local function board_view(state: State, model: gb.Model): Node
 	local first = math.clamp(lane - capacity // 2, 1, math.max(1, #state.lanes + 2 - capacity))
 	local last = math.min(#state.lanes + 1, first + capacity - 1)
 	local room = math.max(0, math.floor(((budget - (col_lines - 1) * 8) / col_lines - COL_CHROME) / ROW))
-	-- 35x24: a wrapped dock can floor this to 0, but one card still fits.
-	-- Keep that card so the cursor stays visible.
-	if room < 1 and #state.rows > 0 then
-		room = 1
-	end
 	local function column(lane: number, head: { Node }, rows: { Row }, empty: string): Node
 		local lo, hi, up, down = window(rows, state.viewport, room)
 		if room > 0 and hi < #rows and not down then
@@ -3215,7 +3210,7 @@ local function board_view(state: State, model: gb.Model): Node
 		if down then
 			table.insert(kids, button("↓ " .. (#rows - hi) .. " more", "browse=" .. rows[hi + 1].key))
 		end
-		if #rows == 0 then
+		if #rows == 0 and room > 0 then
 			table.insert(kids, sp(empty, "bp-dim"))
 		end
 		return el("bp-sc bp-bcol " .. lane_class(lane), kids, { key = "L" .. lane })
@@ -3247,12 +3242,14 @@ local function board_view(state: State, model: gb.Model): Node
 	end
 	if last > #state.lanes then
 		local new: { Node } = { el("bp-colh", { sp("New branch", "bp-lh-n") }) }
-		if held == "files" then
-			table.insert(new, drop("Commit to a new branch", "newcommit", ""))
-		elseif held == "commit" or held == "cfile" then
-			table.insert(new, drop("Move to a new branch", "newmove", ""))
-		else
-			table.insert(new, button("+ Create branch", "do=n"))
+		if room > 0 then
+			if held == "files" then
+				table.insert(new, drop("Commit to a new branch", "newcommit", ""))
+			elseif held == "commit" or held == "cfile" then
+				table.insert(new, drop("Move to a new branch", "newmove", ""))
+			else
+				table.insert(new, button("+ Create branch", "do=n"))
+			end
 		end
 		table.insert(cols, el("bp-sc bp-bcol bp-newcol", new, { key = "new" }))
 	end

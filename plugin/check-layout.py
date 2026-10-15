@@ -914,6 +914,44 @@ local function check_board(state, cx, browsing)
         check(positions(result.main)[state.cursor] ~= nil, "board: keyboard cursor is outside the visible columns/cards")
     end
 end
+for _, size in { { 35, 23, 0 }, { 35, 24, 0 }, { 78, 24, 7 }, { 78, 24, 8 }, { 78, 30, 8 } } do
+    for _, held in { "branch", "file", "marks", "commit", "cfile" } do
+        local state, cx = init("board", size[1], size[2], 2)
+        fixture = board_status()
+        fixture.stacks[2].branches = {}
+        if held == "branch" then fixture.uncommittedChanges = {} end
+        workspace.key(state, { name = "r" }, cx)
+        local source = row_key(state, if held == "commit" then "c-c1-1" elseif held == "cfile" then "cf-1-1:1"
+            elseif held == "branch" then "b-b1" else "f-u1")
+        workspace.event(state, { ev = "action", act = "pick", value = source }, cx)
+        if held == "marks" then
+            workspace.event(state, { ev = "change", name = "mark", value = "work.txt", checked = true }, cx)
+        end
+        if size[3] > 0 then
+            state.notice = { tone = "warning", text = string.rep("Conflicted file. ", math.floor((cx.cols - 12) * size[3] / 17)) }
+        end
+        for lane = 1, #state.lanes + 1 do
+            workspace.event(state, { ev = "action", act = "browse", value = "L" .. lane }, cx)
+            local result = workspace.view(state, cx)
+            local board = result.main.c[2]
+            local available = cx.rows * 17 - height(result.main.c[1], cx.cols) - 32
+                - dock_height(result, cx) - height(board.c[1], cx.cols)
+            check_board(state, cx, true)
+            check(state.cursor == source and (held ~= "marks" or state.marked["work.txt"]),
+                "notice board: browsing changed the held changes")
+            for _, column in board.c[2].c do
+                check((#column.c > 1) == (available >= 65),
+                    "notice board: column body does not fit the remaining " .. available .. "px")
+            end
+        end
+        workspace.key(state, { name = "escape" }, cx)
+        check_board(state, cx, true)
+        check(state.notice == nil and state.cursor == source, "notice board: dismissing the notice changed the selection")
+        for _, column in workspace.view(state, cx).main.c[2].c[2].c do
+            check(#column.c > 1, "notice board: dismissing the notice did not restore the column body")
+        end
+    end
+end
 for _, cols in { 35, 67, 78, 109, 160 } do
     for _, rows in { 24, 30, 60 } do
         local state, cx = init("board", cols, rows, 2)
