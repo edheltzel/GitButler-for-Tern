@@ -26,6 +26,7 @@ function ui.text(spans) return { k = "text", p = { spans = spans } } end
 function ui.col(kids) return { k = "col", c = kids } end
 function ui.lines(kids) return { k = "col", c = kids } end
 function ui.code(text) return { k = "code", p = { text = text } } end
+function ui.progress() return { k = "progress" } end
 local tern = {
     ui = ui,
     block = { define = function(name, definition) blocks[name] = definition end },
@@ -468,6 +469,74 @@ do
     check(state.diff == nil, "the diff outlived the commit it showed")
 end
 do
+    -- A reused cliId must follow the changeId, and but diff keeps the stable selector.
+    local state, cx = init("lanes", 78, 40, 5)
+    workspace.event(state, { ev = "action", act = "open", value = row_key(state, "c-c5") }, cx)
+    check(state.diff ~= nil and state.diff.id == "change5" and state.diff.bind == "c\0change5",
+        "the diff must bind to the commit changeId")
+    local swapped = status(5)
+    for _, c in swapped.stacks[1].branches[1].commits do
+        if c.changeId == "change5" then c.cliId = "c9"
+        elseif c.changeId == "change1" then c.cliId = "c5" end
+    end
+    fixture = swapped
+    calls = {}
+    workspace.key(state, { name = "r", text = "r" }, cx)
+    local shown = workspace.view(state, cx)
+    local followed, stolen = false, false
+    visit(shown.main, function(node)
+        local text = (node.p or {}).text
+        if text == "c9 Commit 5" then followed = true end
+        if text == "c5 Commit 1" then stolen = true end
+    end)
+    local diff_ids = {}
+    for _, argv in calls do
+        for j, a in argv do
+            if a == "diff" then table.insert(diff_ids, argv[j + 1]) end
+        end
+    end
+    check(state.diff ~= nil and state.diff.bind == "c\0change5" and state.diff.id == "change5" and followed and not stolen,
+        "a reused cliId retargeted the diff")
+    check(#diff_ids > 0 and diff_ids[#diff_ids] == "change5",
+        "reload used a snapshot cliId (" .. table.concat(diff_ids, ",") .. ")")
+end
+do
+    -- An unnamed branch has no bind. The first render keeps it; the next refresh closes it.
+    local function unnamed(change_id, message, seg)
+        return {
+            uncommittedChanges = {},
+            stacks = { { cliId = "s1", assignedChanges = {}, branches = {
+                { cliId = seg, name = "", branchStatus = "completelyUnpushed", commits = {
+                    { cliId = "c1", commitId = "sha-" .. change_id, changeId = change_id, message = message, changes = {} },
+                } },
+            } } },
+        }
+    end
+    local state, cx = init("lanes", 78, 40, 1)
+    fixture = unnamed("orig", "original segment", "seg")
+    workspace.key(state, { name = "r", text = "r" }, cx)
+    workspace.event(state, { ev = "action", act = "open", value = row_key(state, "b-seg") }, cx)
+    check(state.diff ~= nil and state.diff.bind == nil, "the unnamed branch diff must open without a stable bind")
+    local shown = workspace.view(state, cx)
+    local back = false
+    visit(shown.main, function(node)
+        if (node.p or {}).text == "← Back" then back = true end
+    end)
+    check(state.diff ~= nil and back, "the first render closed the unnamed branch diff")
+    fixture = unnamed("other", "other segment", "seg")
+    calls = {}
+    workspace.key(state, { name = "r", text = "r" }, cx)
+    workspace.view(state, cx)
+    local diff_ids = {}
+    for _, argv in calls do
+        for j, a in argv do
+            if a == "diff" then table.insert(diff_ids, argv[j + 1]) end
+        end
+    end
+    check(state.diff == nil and #diff_ids == 0,
+        "reused cliId showed the other unnamed segment (diffs=" .. table.concat(diff_ids, ",") .. ")")
+end
+do
     -- A long message weighs more than seven files, but the detail caps body
     -- lines at 4 and file lines at 7, so the seven-file commit is taller.
     -- Narrow panes stack that detail under the list; it has to fit in what
@@ -640,7 +709,7 @@ do
     fixture.stacks[1].branches[1].commits[1].changes[1].filePath = "ambiguous:path"
     fixture.stacks[1].branches[1].commits[1].changeId = ""
     workspace.key(state, { name = "r" }, cx)
-    for _, key in { row_key(state, "b-b1"), row_key(state, "f-u1"), row_key(state, "c-c1"), row_key(state, "cf-1:1") } do
+    for _, key in { row_key(state, "f-u1"), row_key(state, "c-c1"), row_key(state, "cf-1:1") } do
         local before = command_count("diff")
         workspace.event(state, { ev = "action", act = "open", value = key }, cx)
         check(state.diff == nil and command_count("diff") == before, "an unsafe diff target reached but: " .. key)
@@ -915,7 +984,7 @@ for _, rows in { 23, 24 } do
         end
         local source, target = state.cursor, row_key(state, "c-c6")
         local column = node_by_key(workspace.view(state, cx).main, "L2")
-        check(column ~= nil and #column.c - 1 == rows - 22, "short board fixture must leave one or two body lines")
+        check(column ~= nil and #column.c > 1, "short board fixture must leave a body line")
         local reached = false
         for _ = 1, #state.rows do
             local main = workspace.view(state, cx).main

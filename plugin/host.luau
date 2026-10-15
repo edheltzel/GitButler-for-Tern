@@ -80,6 +80,8 @@ type DiffState = {
 	problem: string?,
 	gen: number, -- reloads started before this are dropped
 	kind: string,
+	key: string?,
+	bind: string?, -- changeId, changeId+path, path, or branch name; nil if unnamed
 }
 
 local running: { [number]: State } = {}
@@ -117,6 +119,45 @@ local function load_diff(d: DiffState)
 	if err then
 		d.problem = err
 	end
+end
+
+-- CLI ids are snapshot-local and get reused. The diff follows this instead.
+local function diff_bind(row: Row): string?
+	if row.kind == "commit" and row.changeId and row.changeId ~= "" then
+		return "c\0" .. row.changeId
+	elseif row.kind == "cfile" and row.changeId and row.changeId ~= "" and row.path then
+		return "f\0" .. row.changeId .. "\0" .. row.path
+	elseif row.kind == "file" and row.path then
+		return "u\0" .. row.path
+	elseif row.kind == "branch" and row.branch and row.branch ~= "" then
+		return "b\0" .. row.branch
+	end
+	return nil
+end
+
+-- Retarget an open diff after a status read. No cliId-key fallback: an unbound
+-- diff (an unnamed branch) closes on this refresh, not on the first render.
+local function follow_diff(state: State): DiffState?
+	local d = state.diff
+	if d == nil then
+		return nil
+	end
+	local row: Row? = nil
+	if d.bind then
+		for _, r in state.rows do
+			if diff_bind(r) == d.bind then
+				row = r
+				break
+			end
+		end
+	end
+	if row == nil then
+		state.diff = nil
+		return nil
+	end
+	d.key = row.key
+	d.label = if row.kind == "commit" then row.id .. " " .. row.label else row.label
+	return d
 end
 
 local function diff_nodes(d: DiffState): { Node }
@@ -247,6 +288,7 @@ local function build_rows(state: State)
 	if state.view ~= "board" or not found or (not anchored and not (lane and lane >= 1 and lane <= #lanes + 1)) then
 		state.viewport = state.cursor
 	end
+	follow_diff(state)
 end
 
 local function index_of(state: State, key: string?): number
@@ -1995,19 +2037,22 @@ local function open_diff(state: State)
 		return
 	end
 	local ref = diff_ref(row)
-	if ref == nil then
+	local unnamed = row.kind == "branch" and (row.branch == nil or row.branch == "")
+	if ref == nil and not unnamed then
 		notify(state, "warning", "That row has no safe, stable diff target.")
 		return
 	end
 	local d: DiffState = {
 		cx = state.cx,
 		root = state.root,
-		id = ref,
+		id = ref or row.id,
 		label = if row.kind == "commit" then row.id .. " " .. row.label else row.label,
 		changes = nil,
 		problem = nil,
 		gen = 0,
 		kind = row.kind,
+		key = row.key,
+		bind = diff_bind(row),
 	}
 	state.diff = d
 	load_diff(d)
@@ -3090,6 +3135,11 @@ local function board_view(state: State, model: gb.Model): Node
 	local first = math.clamp(lane - capacity // 2, 1, math.max(1, #state.lanes + 2 - capacity))
 	local last = math.min(#state.lanes + 1, first + capacity - 1)
 	local room = math.max(0, math.floor(((budget - (col_lines - 1) * 8) / col_lines - COL_CHROME) / ROW))
+	-- 35x24: KEYS_HELP wrap makes this floor 0, but one card still fits the
+	-- rendered height model. Keep that card so the cursor stays visible.
+	if room < 1 and #state.rows > 0 then
+		room = 1
+	end
 	local function column(lane: number, head: { Node }, rows: { Row }, empty: string): Node
 		local lo, hi, up, down = window(rows, state.viewport, room)
 		if room > 0 and hi < #rows and not down then
@@ -3374,16 +3424,6 @@ tern.block.define("workspace", {
 		local main: { Node } = { top_bar(state, model) }
 		local sheet = sheet_view(state)
 		local diff = state.diff
-		if diff then
-			local found = false
-			for _, r in state.rows do
-				found = found or (r.kind == diff.kind and diff_ref(r) == diff.id)
-			end
-			if not found then
-				-- the shown file or commit is gone (committed, moved, rewritten)
-				state.diff, diff = nil, nil
-			end
-		end
 		if sheet then
 			table.insert(main, sheet)
 		elseif diff then
@@ -3437,8 +3477,12 @@ tern.block.define("workspace", {
 			if key.name == "escape" or key.name == "backspace" or k == "q" then
 				state.diff = nil
 			elseif k == "r" then
-				load_diff(state.diff :: DiffState)
-				refresh(state)
+				refresh(state, function(data)
+					local d = if data then follow_diff(state) else nil
+					if d then
+						load_diff(d)
+					end
+				end)
 			elseif k == "v" then
 				cycle_view(state)
 			else
