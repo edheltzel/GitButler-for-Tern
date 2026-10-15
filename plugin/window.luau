@@ -1,6 +1,4 @@
 --!strict
--- The window half: the status segment, the commands and keys that open
--- the workspace block, and the `gitbutler://` links the block opens.
 
 local gb = require("./gb")
 
