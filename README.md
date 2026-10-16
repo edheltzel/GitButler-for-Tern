@@ -38,11 +38,7 @@ tern plugin link plugin
 tern plugin list
 ```
 
-You should see:
-
-```
-gitbutler 0.1.0 GitButler — 1 blocks, 4 lenses, window  ready
-```
+You should see `gitbutler` with the version declared in [plugin/plugin.toml](plugin/plugin.toml), the name `GitButler`, and `ready`.
 
 `ready` means Tern loaded both halves of the plugin. Link the `plugin/` folder, not the repository root.
 
@@ -80,7 +76,7 @@ Use **↑** and **↓** to select `b.txt`, then press **⏎**.
 
 You should see the diff open inside the workspace block, in place of the lanes, showing the new line `+hello`. Press **Esc**, **Backspace** or **q**, or click **← Back**, to return to the lanes. A view tab returns directly to that view. Then press **⏎** on another row to see its diff.
 
-While the diff is open, workspace action keys such as **c** and **p** are inactive. Return to the list first, or use a palette action, which returns to the list and acts on its selection. **r** refreshes the workspace before reloading the patch. File, commit and named-branch diffs follow their target across CLI id changes and close when a status refresh no longer finds it.
+While the diff is open, workspace action keys such as **c** and **p** are inactive. Return to the list first, or use a palette action, which returns to the list and acts on its selection. **r** refreshes the workspace before reloading the patch; if a mutation is running, it waits for that mutation's status refresh. File, commit and named-branch diffs follow their target across CLI id changes and close when a status refresh no longer finds it. Their patches reload when a refresh detects workspace changes, even when the commit subject stays the same.
 
 Unnamed branches open a diff for the current snapshot; it closes when a refresh detects a workspace change or a manual **r** refresh succeeds. Paths containing `:` and commits or committed files without a change id show a warning instead.
 
@@ -141,7 +137,7 @@ In this tutorial, you:
   - Actions use the same prompts and confirmation guards as the keyboard and palette; confirmation sheets show the exact `but` command. Anything that rewrites pushed history or deletes work asks for **y**. See the action reference in [DESIGN.md](DESIGN.md) for each operation's confirmation rules.
 
   ![The board view: the toolbar, the Uncommitted column with checkboxes, a column per stack, and drop buttons on the branches and commits](docs/images/board.png)
-- **f** pulls, and so does a click on the upstream chip: it checks the target branch (for example `origin/main`), says `Already up to date` when there is nothing new, and otherwise shows the new commit count and predicted branch or uncommitted-file conflicts. Press **y** to check again; a changed plan requires another confirmation before pulling. Pulling rebases every applied branch onto the target. The result reports actual branch and unresolved file conflicts, or warns when the result or worktree status could not be verified; **z** undoes the pull. When the target is ahead, the chip reads **N upstream commits**; after a pull it turns green and reads **Up to date**.
+- **f** pulls, and so does a click on the upstream chip: it checks the target branch (for example `origin/main`), says `Already up to date` when there is nothing new, and otherwise shows the new commit count and predicted branch or uncommitted-file conflicts. Press **y** to check again; a changed plan requires another confirmation before pulling. Pulling rebases every applied branch onto the target. The result reports actual branch and unresolved file conflicts, or warns when the result or worktree status could not be verified; **z** undoes the pull. If a sheet is open, the result waits for it to close. When the target is ahead, the chip reads **N upstream commits**; after a pull it turns green and reads **Up to date**.
 
   ![The Pull origin/main sheet: 1 new commit on origin/main, what pulling does, and the but pull command](docs/images/pull.png)
 - **L** lands a branch with `but land --yes`, which updates the target branch directly without a pull request. Skip it in repositories where work must land through a PR.
