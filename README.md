@@ -11,6 +11,10 @@
 
 GitButler for Tern is a [Tern](https://docs.stencil.so/tern/index.html) plugin that brings [GitButler](https://gitbutler.com) workspaces into your terminal. It adds a status bar segment, a workspace panel with one lane per branch stack, view tabs, sync status chips and diffs in place, native rendering for `but status`, `but diff`, `but show` and `but oplog`, and palette commands for setting up a folder, pulling upstream, and opening `but tui` or the GitButler app. Every change it makes runs through the `but` CLI, so it never writes with raw git.
 
+![Pressing ⌥⇧⌘G opens the workspace block beside the shell; an edit in the shell appears in the Uncommitted lane, and ⏎ shows its diff in place](docs/images/demo.gif)
+
+[Watch the full 74-second demo](docs/images/demo.mp4): commit from the panel, flip through the five views, commit on the board, pull, undo, and open `but tui`.
+
 ![A shell beside the GitButler for Tern workspace block: the 1 upstream commit and 1 unpushed branch chips, the view tabs, an Uncommitted lane, the response-cache stack and the selected file's details](docs/images/workspace.png)
 
 *Screenshots on this page come from a small demo repository with two stacks (`response-cache` and `units-flag`), so they show more than the tutorial's single file.*
