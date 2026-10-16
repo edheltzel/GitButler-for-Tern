@@ -159,14 +159,10 @@ local function follow_diff(state: State): DiffState?
 		return nil
 	end
 	local next = if row.kind == "commit" then row.id .. " " .. row.label else row.label
-	-- The commit header leads with the snapshot cliId. A title change is a
-	-- new patch; a cliId-only change is not. Reload by the stable id.
-	local previous = if row.kind == "commit" then string.match(d.label, "^%S+ (.*)$") else d.label
-	local retitle = if row.kind == "commit" then previous ~= row.label else previous ~= next
+	-- A pull or rebase can change hunks without a new subject or cliId.
+	-- d.id stays the stable selector from open_diff; row.id is a snapshot cliId.
 	d.label = next
-	if retitle then
-		load_diff(d)
-	end
+	load_diff(d)
 	return d
 end
 
@@ -317,12 +313,14 @@ end
 local function refresh(state: State, after: ((any) -> ())?)
 	-- A sheet's closure already captured its targets. Swapping the model
 	-- under it can retarget the action, so skip the read until it closes.
+	-- Queue callbacks for the read mutate or finish_sheet starts. Calling
+	-- them with nil drops the result. Pumping here recurses while still busy.
 	if not alive(state) then
 		return
 	end
 	if state.sheet ~= nil or state.busy ~= nil then
 		if after then
-			after(nil)
+			table.insert(state.refresh_wait, after)
 		end
 		return
 	end
@@ -342,6 +340,13 @@ local function refresh(state: State, after: ((any) -> ())?)
 			state.refresh_again = true
 		end
 		return
+	end
+	-- Success does not pump, so a waiter left in refresh_wait never runs.
+	local waiters = state.refresh_wait
+	state.refresh_wait = {}
+	state.refresh_again = false
+	for _, waiter in waiters do
+		table.insert(state.refresh_callbacks, waiter)
 	end
 	if after then
 		table.insert(state.refresh_callbacks, after)
@@ -388,6 +393,8 @@ local function refresh(state: State, after: ((any) -> ())?)
 			state.fetched = os.time()
 			state.problem = nil
 			local text = tern.json.encode(r.data)
+			-- follow_diff reloads the open patch. An unchanged poll must not
+			-- reach build_rows, or the diff refetches every 5s.
 			if text ~= state.seen then
 				state.seen = text
 				state.model = model
@@ -3532,10 +3539,12 @@ tern.block.define("workspace", {
 			if key.name == "escape" or key.name == "backspace" or k == "q" then
 				state.diff = nil
 			elseif k == "r" then
+				-- A changed status already reloaded via follow_diff. This
+				-- covers r when the text did not change, without a second fetch.
+				local seen = state.seen
 				refresh(state, function(data)
-					local d = if data then follow_diff(state) else nil
-					if d then
-						load_diff(d)
+					if data and state.seen == seen then
+						follow_diff(state)
 					end
 				end)
 			elseif k == "v" then
