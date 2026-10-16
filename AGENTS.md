@@ -14,9 +14,10 @@ These `AGENTS.md` files are binding work contracts for their subtrees.
 
 This repo is a GitButler workspace (`gitbutler/workspace`, target `origin/main`, remote `origin`, public, default branch `main`), and the plugin requires `but` at run time. Work lands on `main` through a PR (`but pr new <branch>`).
 
-- **VCS in this repo:** use `but` for every write: `but commit -b <branch> -m "<msg>" <ids>`, `but push <branch>`, `but pr new <branch>`. Never run `git add`, `commit`, `checkout`, `switch`, `merge`, `rebase`, `reset`, `stash`, `cherry-pick` or `push`. Read-only git (`git log`, `git show`, `git diff`, `git blame`) is fine. Follow `skill://but`.
-- If HEAD is ever not `gitbutler/workspace`, stop and ask. Do not work around it with plain git or `but teardown`.
+- **VCS in this repo:** use `but` for every repository write except remote management (see below): `but commit -b <branch> -m "<msg>" <ids>`, `but push <branch>`, `but pr new <branch>`. Never run `git add`, `commit`, `checkout`, `switch`, `merge`, `rebase`, `reset`, `stash`, `cherry-pick` or `push`. Read-only git (`git log`, `git show`, `git diff`, `git blame`) is fine. Follow `skill://but`.
+- **Git remotes:** `but` does not manage git remotes, so manage them with plain `git remote`. This is the one exception to `but`-only writes. Keep `origin` at `https://github.com/edheltzel/gitbutler-for-tern.git` (lowercase; GitHub redirects to GitButler-for-Tern).
 - **Plugin runtime:** `but` (tested with 0.22.3) must be installed on the machine that runs the panes. `gb.luau` looks for it in `PATH`, `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`.
+- If HEAD is ever not `gitbutler/workspace`, stop and ask. Do not work around it with plain git or `but teardown`.
 - Never add an agent as a commit co-author.
 - **Shipping to `main` (user rule):** every PR goes through the no-mistakes gate, and no-mistakes must follow GitButler (no checkout, no worktree workaround). Only for that ship: `but config push-remote no-mistakes`, `but push <top branch>`, keep the top branch's run and abort the lower ones (`no-mistakes axi abort --run <id>`), then `but config push-remote origin`. One PR per ship.
 - **Gate limits on a GitButler workspace:** a push can't carry `--intent`, so the gate infers it from transcripts. `no-mistakes axi respond` has no `--run` and resolves only the current branch, so it cannot answer a gate while HEAD is `gitbutler/workspace`. `no-mistakes axi status --run <id>` and `logs` can inspect that run. `axi respond` only works from a checkout of the run's branch; otherwise hand off with `no-mistakes attach --run <id>`.
@@ -72,7 +73,7 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
 
 ## Boundaries
 
-- **Never:** raw git writes (see above), mutating a real repo while testing, editing `tern.d.luau` by hand, or editing `CHANGELOG.md` or other generated files.
+- **Never:** raw git writes other than managing remotes with `git remote` (see GitButler is mandatory), mutating a real repo while testing, editing `tern.d.luau` by hand, or editing `CHANGELOG.md` or other generated files.
 - **Ask first:** new `[[lenses]]` match patterns (a claim also blocks Tern's built-in lens), changes to the spawn filter (it affects every shell Tern starts), new default keybinds, and adding a remote or changing the `origin/main` target.
 
 ## User Preferences

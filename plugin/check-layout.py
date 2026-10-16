@@ -13,7 +13,7 @@ bootstrap = "local sources = {\n" + "\n".join(
 checks = r'''
 local blocks, modules, fixture = {}, {}, nil
 local calls = {}
-local pending_status, timers, replies, forced = nil, {}, nil, nil
+local pending_status, timers, replies, forced, hold_op, hold_done = nil, {}, nil, nil, nil, nil
 local pane = 0
 local root = "/fixture"
 local ui = {}
@@ -44,6 +44,10 @@ local tern = {
         table.insert(calls, table.clone(argv))
         if pending_status and argv[4] == "status" then
             table.insert(pending_status, done)
+            return
+        end
+        if hold_op and argv[4] == hold_op then
+            table.insert(hold_done, done)
             return
         end
         if replies then
@@ -555,11 +559,235 @@ do
     check(header and command_count("diff") == before + 1 and last == "change5",
         "a rebuilt title left the patch stale or reloaded cliId " .. tostring(last) .. " (diffs " .. before .. "->" .. command_count("diff") .. ", header " .. tostring(header) .. ")")
 end
+do
+    -- A pull can change hunks and leave the subject and cliId alone.
+    -- The open diff must reload by changeId. The next unchanged poll must not.
+    local state, cx = init("lanes", 78, 40, 5)
+    workspace.event(state, { ev = "action", act = "open", value = row_key(state, "c-c5") }, cx)
+    local before = command_count("diff")
+    local pulled = status(5)
+    for _, c in pulled.stacks[1].branches[1].commits do
+        if c.changeId == "change5" then c.changes[1].filePath = "rebased.txt" end
+    end
+    pulled.upstreamState = { behind = 1 }
+    fixture = pulled
+    timers[#timers]()
+    local header = false
+    visit(workspace.view(state, cx).main, function(node)
+        if (node.p or {}).text == "c5 Commit 5" then header = true end
+    end)
+    local last
+    for _, argv in calls do if argv[4] == "diff" then last = argv[5] end end
+    check(header and state.diff ~= nil and state.diff.id == "change5" and state.diff.bind == "c\0change5"
+        and command_count("diff") == before + 1 and last == "change5",
+        "same subject and cliId left the diff stale or reloaded " .. tostring(last)
+        .. " (diffs " .. before .. "->" .. command_count("diff") .. ", header " .. tostring(header) .. ")")
+    local steady = command_count("diff")
+    timers[#timers]()
+    check(command_count("diff") == steady,
+        "steady poll refetched the open diff (" .. steady .. "->" .. command_count("diff") .. ")")
+end
+do
+    -- r during a mutation must wait for the status read that mutation starts.
+    local state, cx = init("lanes", 78, 40, 5)
+    workspace.event(state, { ev = "action", act = "pick", value = row_key(state, "b-b1") }, cx)
+    hold_op, hold_done = "unapply", {}
+    workspace.key(state, { name = "u", text = "u" }, cx)
+    workspace.key(state, { name = "y", text = "y" }, cx)
+    local held = #hold_done == 1 and state.busy ~= nil
+    check(held, "unapply did not stay busy (held " .. #hold_done .. ")")
+    if held then
+        workspace.event(state, { ev = "action", act = "open", value = row_key(state, "c-c5") }, cx)
+        local diffs = command_count("diff")
+        workspace.key(state, { name = "r", text = "r" }, cx)
+        check(command_count("diff") == diffs and state.diff ~= nil and state.diff.id == "change5",
+            "r during a mutation reloaded before the post-mutation read")
+        pending_status = {}
+        hold_op = nil
+        hold_done[1]({ stdout = "{}", stderr = "", status = 0 })
+        check(#pending_status == 1 and command_count("diff") == diffs,
+            "r during a mutation started " .. #pending_status .. " status reads and "
+            .. (command_count("diff") - diffs) .. " early diffs")
+        if #pending_status == 1 then
+            pending_status[1]({ stdout = "{}", stderr = "", status = 0 })
+        end
+        pending_status = nil
+        local last
+        for _, argv in calls do if argv[4] == "diff" then last = argv[5] end end
+        check(command_count("diff") == diffs + 1 and last == "change5",
+            "r during a mutation did not reload by changeId when the post-mutation read landed (diffs "
+            .. diffs .. "->" .. command_count("diff") .. ", last " .. tostring(last) .. ")")
+    end
+    hold_op, hold_done = nil, nil
+end
+for _, interruption in { "before", "during", "busy" } do
+    for _, outcome in { "conflicts", "clean", "failure", "timeout", "invalid", "spawn", "undo", "undo-failure", "undo-spawn" } do
+        local function encode(v)
+            local t = type(v)
+            if t == "string" then return string.format("%q", v)
+            elseif t == "number" or t == "boolean" then return tostring(v)
+            elseif t == "nil" then return "null"
+            elseif t ~= "table" then return string.format("%q", tostring(v)) end
+            if #v > 0 then
+                local parts = {}
+                for i = 1, #v do parts[i] = encode(v[i]) end
+                return "[" .. table.concat(parts, ",") .. "]"
+            end
+            local parts = {}
+            for k, val in v do table.insert(parts, string.format("%q", tostring(k)) .. ":" .. encode(val)) end
+            table.sort(parts)
+            return "{" .. table.concat(parts, ",") .. "}"
+        end
+        local state, cx = init("lanes", 78, 40, 1)
+        local notices = 0
+        local pull_text = ""
+        function cx:toast(_, text)
+            if string.find(text, "Pulled main", 1, true) == 1 then
+                notices += 1
+                pull_text = text
+            end
+        end
+        pending_status = {}
+        timers[#timers]()
+        local pre = pending_status[1]
+        pending_status = nil
+        local saved = tern.json.encode
+        tern.json.encode = encode
+        replies = {
+            check = {
+                upToDate = false,
+                upstreamCommits = { count = 2 },
+                baseBranch = { name = "main", remoteName = "origin", baseSha = "aaa", currentSha = "bbb" },
+                hasWorktreeConflicts = false,
+                branchStatuses = { { name = "feature", status = "unpushed", rebasable = true } },
+            },
+            pull = { status = "completed" },
+        }
+        local superseded = string.find(outcome, "undo", 1, true) == 1
+        if superseded then
+            replies.pull = { status = "completed_with_conflicts", conflicts = { { branch = "feature" } } }
+        end
+        workspace.key(state, { name = "f", text = "f" }, cx)
+        workspace.key(state, { name = "y", text = "y" }, cx)
+        replies, forced = nil, nil
+        pending_status = {}
+        if interruption ~= "before" then
+            pre({ stdout = "{}", stderr = "", status = 0 })
+            check(#pending_status == 1, interruption .. ": replacement read did not start")
+        end
+        if superseded then
+            local interrupted = if interruption == "before" then pre else pending_status[1]
+            replies = { oplog = { { id = "after-pull", details = { body = "pull" } } } }
+            workspace.key(state, { name = "z", text = "z" }, cx)
+            check(state.sheet ~= nil and state.sheet.command == "but undo", "Undo did not open its confirmation")
+            if interruption == "during" then
+                interrupted({ stdout = "{}", stderr = "", status = 0 })
+            end
+            pending_status = {}
+            hold_op, hold_done = "undo", {}
+            local process_run = tern.process.run
+            tern.process.run = function(argv, opts, complete)
+                if argv[4] == "undo" then
+                    check(notices == 1 and string.find(pull_text, "an unconfirmed worktree status", 1, true) ~= nil,
+                        interruption .. "/" .. outcome .. ": previous verification was not settled before Undo started")
+                    if outcome == "undo-spawn" then error("undo spawn failed") end
+                end
+                return process_run(argv, opts, complete)
+            end
+            workspace.key(state, { name = "y", text = "y" }, cx)
+            tern.process.run = process_run
+            replies, forced = nil, nil
+            if interruption == "busy" then
+                interrupted({ stdout = "{}", stderr = "", status = 0 })
+            end
+            hold_op = nil
+            if outcome ~= "undo-spawn" then
+                check(state.busy ~= nil and #hold_done == 1, "Undo did not start its write")
+                if #hold_done == 1 then
+                    hold_done[1]({ stdout = "{}", stderr = "undo failed", status = if outcome == "undo-failure" then 1 else 0 })
+                end
+            end
+            hold_done = nil
+            if interruption == "before" then
+                interrupted({ stdout = "{}", stderr = "", status = 0 })
+            end
+            timers[#timers]()
+            check(#pending_status == 1, interruption .. "/" .. outcome .. ": missing post-undo status read")
+            fixture = status(1)
+            fixture.conflictedFiles = { "after-undo.txt" }
+            if #pending_status == 1 then
+                pending_status[1]({ stdout = "{}", stderr = "", status = 0 })
+            end
+            pending_status = nil
+            tern.json.encode = saved
+            local expected = if outcome == "undo" then "Undid pull"
+                elseif outcome == "undo-failure" then "but undo: undo failed" else "undo spawn failed"
+            local text = state.notice and state.notice.text or ""
+            check(string.find(text, expected, 1, true) ~= nil
+                and state.notice.tone == (if outcome == "undo" then "success" else "error"),
+                interruption .. "/" .. outcome .. ": previous verification overwrote Undo (" .. text .. ")")
+            timers[#timers]()
+            check(notices == 1 and state.notice ~= nil and state.notice.text == text,
+                interruption .. "/" .. outcome .. ": a superseded pull notice ran again")
+            continue
+        end
+        if interruption == "busy" then
+            hold_op, hold_done = "branch", {}
+            workspace.key(state, { name = "a", text = "a" }, cx)
+            check(state.busy ~= nil and #hold_done == 1, "apply did not hold its branch read")
+        else
+            workspace.key(state, { name = "?", text = "?" }, cx)
+            check(state.sheet ~= nil and state.sheet.kind == "help", "help did not open during pull refresh")
+        end
+        if interruption == "before" then
+            pre({ stdout = "{}", stderr = "", status = 0 })
+        elseif #pending_status == 1 then
+            pending_status[1]({ stdout = "{}", stderr = "", status = 0 })
+        end
+        local early = state.notice and state.notice.text or ""
+        check(state.notice == nil and notices == 0, interruption .. ": pull notice ran on a nil workspace (" .. early .. ")")
+        pending_status = {}
+        local process_run = tern.process.run
+        if outcome == "spawn" then
+            tern.process.run = function() error("status spawn failed") end
+        end
+        if interruption == "busy" then
+            hold_op = nil
+            hold_done[1]({ stdout = "{}", stderr = "", status = 0 })
+            hold_done = nil
+            timers[#timers]()
+        else
+            workspace.key(state, { name = "escape" }, cx)
+        end
+        tern.process.run = process_run
+        check(outcome == "spawn" or #pending_status == 1,
+            interruption .. ": resuming did not start the parked pull read (" .. #pending_status .. ")")
+        if #pending_status == 1 then
+            local post = status(1)
+            if outcome == "conflicts" then post.conflictedFiles = { "src/conflicted.txt" } end
+            fixture = if outcome == "invalid" then nil else post
+            pending_status[1]({ stdout = "{}", stderr = "status failed", status = if outcome == "failure" then 1 else 0,
+                timed_out = outcome == "timeout" })
+        end
+        pending_status = nil
+        tern.json.encode = saved
+        local text = state.notice and state.notice.text or ""
+        local expected = if outcome == "conflicts" then "src/conflicted.txt"
+            elseif outcome == "clean" then "Pulled main" else "an unconfirmed worktree status"
+        check(state.notice ~= nil and state.notice.tone == (if outcome == "clean" then "success" else "warning")
+            and string.find(text, expected, 1, true) ~= nil and string.find(text, "Pulled main", 1, true) == 1,
+            interruption .. "/" .. outcome .. ": pull notice lost its result (" .. text .. ")")
+        fixture = status(1)
+        timers[#timers]()
+        check(notices == 1, interruption .. "/" .. outcome .. ": pull notice ran " .. notices .. " times")
+    end
+end
 for _, target in { "c-c5", "cf-5:1", "f-u1", "b-b1" } do
     for _, outcome in { "unchanged", "renumbered", "removed", "failure", "timeout", "invalid", "cancelled", "sheet", "busy", "closed", "repeated" } do
         local state, cx = init("lanes", 78, 40, 5)
         workspace.event(state, { ev = "action", act = "open", value = row_key(state, target) }, cx)
         local original = state.diff
+        local seen_fixture = fixture
         local diffs, statuses = command_count("diff"), command_count("status")
         pending_status = {}
         timers[#timers]()
@@ -579,16 +807,17 @@ for _, target in { "c-c5", "cf-5:1", "f-u1", "b-b1" } do
         elseif outcome == "cancelled" then
             state.reads += 1
         elseif outcome == "sheet" then
-            state.sheet = { kind = "help", title = "GitButler keys" }
+            workspace.event(state, { ev = "action", act = "do", value = "?" }, cx)
         elseif outcome == "busy" then
             state.busy = "Checking changes…"
         elseif outcome == "closed" then
             workspace.key(state, { name = "escape" }, cx)
         end
         local done = pending_status[1]
-        pending_status = nil
         done({ stdout = "{}", stderr = "status failed", status = if outcome == "failure" then 1 else 0,
             timed_out = outcome == "timeout" })
+        local retry = pending_status[2]
+        pending_status = nil
         local reloads = if outcome == "repeated" then 2 elseif outcome == "unchanged" or outcome == "renumbered" then 1 else 0
         check(command_count("diff") == diffs + reloads,
             target .. ": poll completion lost or incorrectly ran the " .. outcome .. " reload")
@@ -602,9 +831,23 @@ for _, target in { "c-c5", "cf-5:1", "f-u1", "b-b1" } do
             check(state.diff == nil, target .. ": a removed or closed target was reopened")
         end
         local before = command_count("diff")
-        if outcome == "invalid" then fixture = status(5) end
-        if outcome == "sheet" then state.sheet = nil end
+        if outcome == "invalid" then fixture = seen_fixture end
+        if outcome == "sheet" then workspace.key(state, { name = "escape" }, cx) end
         if outcome == "busy" then state.busy = nil end
+        if outcome == "cancelled" then
+            check(retry ~= nil, target .. ": invalidated reload did not start a replacement read")
+            if retry then retry({ stdout = "{}", stderr = "", status = 0 }) end
+        end
+        timers[#timers]()
+        local deferred = outcome == "sheet" or outcome == "busy" or outcome == "cancelled"
+        check(command_count("diff") == before + (if deferred then 1 else 0),
+            target .. ": the " .. outcome .. " reload did not resume exactly once")
+        if deferred then
+            local last
+            for _, argv in calls do if argv[4] == "diff" then last = argv[5] end end
+            check(state.diff == original and last == original.id, target .. ": deferred reload lost its stable selector")
+        end
+        before = command_count("diff")
         timers[#timers]()
         check(command_count("diff") == before, target .. ": a completed reload leaked into the next poll")
     end
