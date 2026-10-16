@@ -354,12 +354,16 @@ local function refresh(state: State, after: ((any) -> ())?)
 	state.loading = true
 	state.read_token = state.reads
 	local token = state.reads
-	local function finish(data: any)
+	local function finish(data: any, deferred: boolean?)
 		state.loading = false
 		local callbacks = state.refresh_callbacks
 		state.refresh_callbacks = {}
 		for _, callback in callbacks do
-			callback(data)
+			if deferred then
+				table.insert(state.refresh_wait, callback)
+			else
+				callback(data)
+			end
 		end
 	end
 	local function pump()
@@ -381,7 +385,7 @@ local function refresh(state: State, after: ((any) -> ())?)
 			return
 		end
 		if token ~= state.reads or state.sheet ~= nil or state.busy ~= nil then
-			finish(nil)
+			finish(nil, true)
 			state.cx:render()
 			pump()
 			return
