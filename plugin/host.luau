@@ -64,6 +64,7 @@ type State = {
 	refresh_callbacks: { (any) -> () },
 	refresh_wait: { (any) -> () }, -- need a read started at the current reads
 	refresh_again: boolean,
+	verification: ((any) -> ())?,
 	fetched: number?,
 	problem: string?,
 	timer: TimerHandle?,
@@ -1546,6 +1547,9 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 	if state.busy then
 		return
 	end
+	if state.verification then
+		state.verification(nil)
+	end
 	local argv = table.clone(args)
 	table.insert(argv, "--json")
 	-- but 0.22.3 releases the status write guard before it writes JSON, so a
@@ -1562,6 +1566,10 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 		state.busy = nil
 		if r.ok then
 			local function show(workspace: any)
+				if state.verification ~= show then
+					return
+				end
+				state.verification = nil
 				local text, tone = "", "success"
 				if type(done) == "function" then
 					local t, tn = done(r.data, workspace)
@@ -1571,6 +1579,7 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 				end
 				notify(state, tone, text, command_line(args))
 			end
+			state.verification = show
 			table.clear(state.marked)
 			if type(done) == "function" then
 				refresh(state, show)
@@ -3446,6 +3455,7 @@ tern.block.define("workspace", {
 			refresh_callbacks = {},
 			refresh_wait = {},
 			refresh_again = false,
+			verification = nil,
 			fetched = nil,
 			problem = if gb.root(root) then nil else "Not a GitButler workspace: " .. root,
 			timer = nil,

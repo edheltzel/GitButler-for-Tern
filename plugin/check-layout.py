@@ -621,7 +621,7 @@ do
     hold_op, hold_done = nil, nil
 end
 for _, interruption in { "before", "during", "busy" } do
-    for _, outcome in { "conflicts", "clean", "failure", "timeout", "invalid", "spawn" } do
+    for _, outcome in { "conflicts", "clean", "failure", "timeout", "invalid", "spawn", "undo", "undo-failure", "undo-spawn" } do
         local function encode(v)
             local t = type(v)
             if t == "string" then return string.format("%q", v)
@@ -640,8 +640,12 @@ for _, interruption in { "before", "during", "busy" } do
         end
         local state, cx = init("lanes", 78, 40, 1)
         local notices = 0
+        local pull_text = ""
         function cx:toast(_, text)
-            if string.find(text, "Pulled main", 1, true) == 1 then notices += 1 end
+            if string.find(text, "Pulled main", 1, true) == 1 then
+                notices += 1
+                pull_text = text
+            end
         end
         pending_status = {}
         timers[#timers]()
@@ -659,6 +663,10 @@ for _, interruption in { "before", "during", "busy" } do
             },
             pull = { status = "completed" },
         }
+        local superseded = string.find(outcome, "undo", 1, true) == 1
+        if superseded then
+            replies.pull = { status = "completed_with_conflicts", conflicts = { { branch = "feature" } } }
+        end
         workspace.key(state, { name = "f", text = "f" }, cx)
         workspace.key(state, { name = "y", text = "y" }, cx)
         replies, forced = nil, nil
@@ -666,6 +674,62 @@ for _, interruption in { "before", "during", "busy" } do
         if interruption ~= "before" then
             pre({ stdout = "{}", stderr = "", status = 0 })
             check(#pending_status == 1, interruption .. ": replacement read did not start")
+        end
+        if superseded then
+            local interrupted = if interruption == "before" then pre else pending_status[1]
+            replies = { oplog = { { id = "after-pull", details = { body = "pull" } } } }
+            workspace.key(state, { name = "z", text = "z" }, cx)
+            check(state.sheet ~= nil and state.sheet.command == "but undo", "Undo did not open its confirmation")
+            if interruption == "during" then
+                interrupted({ stdout = "{}", stderr = "", status = 0 })
+            end
+            pending_status = {}
+            hold_op, hold_done = "undo", {}
+            local process_run = tern.process.run
+            tern.process.run = function(argv, opts, complete)
+                if argv[4] == "undo" then
+                    check(notices == 1 and string.find(pull_text, "an unconfirmed worktree status", 1, true) ~= nil,
+                        interruption .. "/" .. outcome .. ": previous verification was not settled before Undo started")
+                    if outcome == "undo-spawn" then error("undo spawn failed") end
+                end
+                return process_run(argv, opts, complete)
+            end
+            workspace.key(state, { name = "y", text = "y" }, cx)
+            tern.process.run = process_run
+            replies, forced = nil, nil
+            if interruption == "busy" then
+                interrupted({ stdout = "{}", stderr = "", status = 0 })
+            end
+            hold_op = nil
+            if outcome ~= "undo-spawn" then
+                check(state.busy ~= nil and #hold_done == 1, "Undo did not start its write")
+                if #hold_done == 1 then
+                    hold_done[1]({ stdout = "{}", stderr = "undo failed", status = if outcome == "undo-failure" then 1 else 0 })
+                end
+            end
+            hold_done = nil
+            if interruption == "before" then
+                interrupted({ stdout = "{}", stderr = "", status = 0 })
+            end
+            timers[#timers]()
+            check(#pending_status == 1, interruption .. "/" .. outcome .. ": missing post-undo status read")
+            fixture = status(1)
+            fixture.conflictedFiles = { "after-undo.txt" }
+            if #pending_status == 1 then
+                pending_status[1]({ stdout = "{}", stderr = "", status = 0 })
+            end
+            pending_status = nil
+            tern.json.encode = saved
+            local expected = if outcome == "undo" then "Undid pull"
+                elseif outcome == "undo-failure" then "but undo: undo failed" else "undo spawn failed"
+            local text = state.notice and state.notice.text or ""
+            check(string.find(text, expected, 1, true) ~= nil
+                and state.notice.tone == (if outcome == "undo" then "success" else "error"),
+                interruption .. "/" .. outcome .. ": previous verification overwrote Undo (" .. text .. ")")
+            timers[#timers]()
+            check(notices == 1 and state.notice ~= nil and state.notice.text == text,
+                interruption .. "/" .. outcome .. ": a superseded pull notice ran again")
+            continue
         end
         if interruption == "busy" then
             hold_op, hold_done = "branch", {}
