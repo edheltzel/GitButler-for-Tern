@@ -13,7 +13,9 @@ GitButler for Tern is a [Tern](https://docs.stencil.so/tern/index.html) plugin t
 
 ![Pressing ⌥⇧⌘G opens the workspace block beside the shell; an edit in the shell appears in the Uncommitted lane, and ⏎ shows its diff in place](docs/images/demo.gif)
 
-[Watch the full 74-second demo](docs/images/demo.mp4): commit from the panel, flip through the five views, commit on the board, pull, undo, and open `but tui`.
+The full 74-second demo: commit from the panel, flip through the five views, commit on the board, pull, undo, and open `but tui` ([MP4](docs/images/demo.mp4)).
+
+https://github.com/user-attachments/assets/89888417-9b98-4774-9684-eb0e0a3b9935
 
 ![A shell beside the GitButler for Tern workspace block: the 1 upstream commit and 1 unpushed branch chips, the view tabs, an Uncommitted lane, the response-cache stack and the selected file's details](docs/images/workspace.png)
 
