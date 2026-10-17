@@ -32,6 +32,7 @@ local tern = {
     ui = ui,
     block = { define = function(name, definition) blocks[name] = definition end },
     getenv = function() return nil end,
+    plugin = { data = "/nonexistent" },
     fs = {
         exists = function(path) return path == root .. "/.git" or path == root .. "/.git/gitbutler" end,
         read = function(path)

@@ -1,6 +1,7 @@
 --!strict
 
 local gb = require("./gb")
+local drag = require("./drag")
 
 local WORKSPACE = "gitbutler.workspace"
 local OPEN = "plugin.gitbutler.open"
@@ -442,8 +443,19 @@ local ACTIONS = {
 	{ "help", "GitButler: Show workspace keys" },
 }
 
-local function send_action(cx: WindowCx, pane: number, act: string)
-	cx.session:event(pane, { ev = "action", act = act })
+-- Opens (or focuses) the workspace block and hands it `ev`. A block that is
+-- only now starting gets it once its first view is up.
+local function deliver(cx: WindowCx, root: string, ev: { [string]: any })
+	local pane, existed = open_workspace(cx, root)
+	if pane and existed then
+		cx.session:event(pane, ev)
+	elseif pane then
+		tern.timer(1500, function(tcx: WindowCx?)
+			if tcx then
+				tcx.session:event(pane :: number, ev)
+			end
+		end)
+	end
 end
 
 for _, a in ACTIONS do
@@ -454,22 +466,150 @@ for _, a in ACTIONS do
 		icon = "git-branch",
 		run = function(cx: WindowCx)
 			local root = focused_root(cx)
-			if root == nil then
-				return
-			end
-			local pane, existed = open_workspace(cx, root)
-			if pane and existed then
-				send_action(cx, pane, act)
-			elseif pane then
-				tern.timer(1500, function(tcx: WindowCx?)
-					if tcx then
-						send_action(tcx, pane :: number, act)
-					end
-				end)
+			if root then
+				deliver(cx, root, { ev = "action", act = act })
 			end
 		end,
 	})
 end
+
+-- The drag-and-drop board: Tern's own Markdown board block, which can drag
+-- cards (plugin blocks get no drag events). The workspace block writes it
+-- (gb.board_path) and rewrites it on every change, which reloads it with new
+-- lane and card ids; a reload is mapped to row keys by position through the
+-- key file. A card that changed lane or place under unchanged lanes is one
+-- drag (drag.moved), handed to the block as a `native_drop`, which runs the
+-- same guarded actions as its own board. Lanes the user added, removed or
+-- reordered don't map: the block rewrites the board once for them.
+type Watch = { pane: number, keys: { [string]: string }, lane_keys: { string }, board: drag.Board?, resynced: string? }
+local watches: { [string]: Watch } = {}
+local WATCH_MS = 400
+
+local function board_of(snap: any): drag.Board
+	local board: drag.Board = { lanes = {}, cards = {} }
+	for _, lane in (if type(snap.lanes) == "table" then snap.lanes else {}) do
+		local ids: { string } = {}
+		for _, card in (if type(lane.cards) == "table" then lane.cards else {}) do
+			table.insert(ids, tostring(card.id))
+		end
+		table.insert(board.lanes, tostring(lane.id))
+		table.insert(board.cards, ids)
+	end
+	return board
+end
+
+local function map_keys(path: string, board: drag.Board): ({ [string]: string }?, { string }?)
+	local ok, text = pcall(tern.fs.read, path .. ".json", 4194304)
+	local data = if ok then tern.json.decode(text :: string) else nil
+	if type(data) ~= "table" or type(data.lanes) ~= "table" or #data.lanes ~= #board.cards then
+		return nil, nil
+	end
+	local keys: { [string]: string }, lane_keys: { string } = {}, {}
+	for i, ids in board.cards do
+		local lane = data.lanes[i]
+		if type(lane) ~= "table" or type(lane.cards) ~= "table" or #lane.cards ~= #ids then
+			return nil, nil
+		end
+		lane_keys[i] = lane.key
+		for j, id in ids do
+			keys[id] = lane.cards[j]
+		end
+	end
+	return keys, lane_keys
+end
+
+local function on_board(cx: WindowCx, root: string, path: string, snap: any)
+	local w = watches[root]
+	if w == nil then
+		return
+	end
+	local board = board_of(snap)
+	if w.board == nil or not drag.same_lanes(w.board :: drag.Board, board) then
+		local keys, lane_keys = map_keys(path, board)
+		if keys and lane_keys then
+			w.keys, w.lane_keys, w.board = keys, lane_keys, board
+		else
+			w.board = nil
+			local sig = table.concat(board.lanes, "\0")
+			if w.resynced ~= sig then
+				w.resynced = sig
+				deliver(cx, root, { ev = "action", act = "native_board" })
+			end
+		end
+		return
+	end
+	local id, lane, near, below = drag.moved(w.board :: drag.Board, board)
+	w.board = board
+	local source = if id then w.keys[id] else nil
+	local target = w.lane_keys[lane]
+	if source and target then
+		local value = source .. ":" .. target .. ":" .. (if near then w.keys[near] or "" else "") .. ":" .. (if below then "1" else "0")
+		deliver(cx, root, { ev = "action", act = "native_drop", value = value })
+	end
+end
+
+local function watch_board(root: string, path: string)
+	tern.timer(WATCH_MS, function(cx: WindowCx?)
+		local w = watches[root]
+		if w == nil then
+			return
+		end
+		if cx and cx.session:pane(w.pane) == nil then
+			watches[root] = nil
+			return
+		end
+		if cx then
+			cx.board:read(w.pane, { rows = 500 }):next(function(snap: any, _err: any, tcx: WindowCx?)
+				if snap and tcx then
+					on_board(tcx, root, path, snap)
+				end
+			end)
+		end
+		watch_board(root, path)
+	end)
+end
+
+-- Opens the board once the block has written it (a fresh block needs a moment).
+local function open_board(root: string, path: string, tries: number)
+	tern.timer(200, function(cx: WindowCx?)
+		if cx == nil then
+			return
+		end
+		if not tern.fs.exists(path) then
+			if tries > 0 then
+				open_board(root, path, tries - 1)
+			else
+				cx:toast("error", "The GitButler board was not written", path)
+			end
+			return
+		end
+		local pane = cx.board:open(path, { how = "beside" })
+		local fresh = watches[root] == nil
+		watches[root] = { pane = pane, keys = {}, lane_keys = {} }
+		if fresh then
+			watch_board(root, path)
+		end
+	end)
+end
+
+tern.command({
+	id = "board",
+	title = "GitButler: Open drag-and-drop board",
+	icon = "git-branch",
+	run = function(cx: WindowCx)
+		local root = focused_root(cx)
+		if root == nil then
+			return
+		end
+		local w = watches[root]
+		if w and cx.session:pane(w.pane) then
+			cx.layout:focus(w.pane)
+			return
+		end
+		deliver(cx, root, { ev = "action", act = "native_board" })
+		open_board(root, gb.board_path(root), 25)
+	end,
+})
 
 -- Tern's git block writes with raw git (stage, commit, checkout, stash),
 -- which a GitButler workspace must not take. Its `git.*` keys are view

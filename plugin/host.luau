@@ -73,6 +73,7 @@ type State = {
 	notice: { tone: string, text: string }?,
 	view: string, -- "lanes" | "graph" | "stacks" | "branches" | "board"
 	diff: DiffState?, -- the diff shown in place of the view (⏎), until Esc
+	board_text: string?, -- the drag-and-drop board last written (gb.board_path); nil rewrites it
 }
 
 -- `but diff <id> --json` for one file, commit or branch, shown in the panel.
@@ -307,6 +308,64 @@ local function index_of(state: State, key: string?): number
 	return 0
 end
 
+-- The drag-and-drop board's Markdown and its key file: an Uncommitted lane,
+-- a lane per branch with its commits (newest first), then New branch.
+local function board_files(state: State): (string, string)
+	local lines = { "# GitButler · " .. basename(state.root), "" }
+	local lanes: { any } = {}
+	local function lane(key: string, title: string, rows: { Row })
+		table.insert(lines, "## " .. title)
+		table.insert(lines, "")
+		local cards = tern.json.array()
+		for _, r in rows do
+			table.insert(lines, "- [ ] " .. (string.gsub(r.label, "%s+", " ")))
+			table.insert(cards, r.key)
+		end
+		if #rows > 0 then
+			table.insert(lines, "")
+		end
+		table.insert(lanes, { key = key, cards = cards })
+	end
+	local files: { Row } = {}
+	for _, r in state.lanes[1] or {} do
+		table.insert(files, r)
+	end
+	lane("U", "Uncommitted", files)
+	for _, b in state.rows do
+		if b.kind == "branch" then
+			local commits: { Row } = {}
+			for _, r in state.rows do
+				if r.kind == "commit" and r.bkey == b.key then
+					table.insert(commits, r)
+				end
+			end
+			lane(b.key, b.label, commits)
+		end
+	end
+	lane("N", "New branch", {})
+	return table.concat(lines, "\n"), tern.json.encode({ lanes = tern.json.array(lanes) })
+end
+
+-- Rewrites the drag-and-drop board when the workspace changed, if it exists
+-- (`create` makes it). The key file goes first: the window maps a reloaded
+-- board's cards through it.
+local function sync_board(state: State, create: boolean?)
+	local path = gb.board_path(state.root)
+	if state.model == nil or not (create or tern.fs.exists(path)) then
+		return
+	end
+	local md, keys = board_files(state)
+	if md == state.board_text and not create then
+		return
+	end
+	local ok = pcall(function()
+		tern.fs.mkdir((string.match(path, "^(.*)/[^/]+$") :: string))
+		tern.fs.write(path .. ".json", keys)
+		tern.fs.write(path, md)
+	end)
+	state.board_text = if ok then md else nil
+end
+
 local function selected(state: State): Row?
 	return state.rows[index_of(state, state.cursor)]
 end
@@ -405,6 +464,7 @@ local function refresh(state: State, after: ((any) -> ())?)
 				state.model = model
 				build_rows(state)
 			end
+			sync_board(state)
 		end
 		finish(if model then r.data else nil)
 		state.cx:render()
@@ -1564,6 +1624,7 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 			return
 		end
 		state.busy = nil
+		state.board_text = nil -- the next read puts every dragged card where it now is
 		if r.ok then
 			local function show(workspace: any)
 				if state.verification ~= show then
@@ -1708,6 +1769,7 @@ local function apply_status(state: State, data: any): gb.Model?
 	state.seen = tern.json.encode(data)
 	state.fetched = os.time()
 	build_rows(state)
+	sync_board(state)
 	return model
 end
 
@@ -2270,8 +2332,8 @@ local function action_squash(state: State, target: Row)
 	end)
 end
 
--- Moves the selected commit to sit directly above `target`, on its branch.
-local function action_place_above(state: State, target: Row)
+-- Moves the selected commit to sit directly above (or below) `target`, on its branch.
+local function action_place(state: State, target: Row, below: boolean?)
 	local row, ref = held_change(state)
 	if row == nil or ref == nil then
 		return
@@ -2280,18 +2342,19 @@ local function action_place_above(state: State, target: Row)
 	if move_blocked(state, row) then
 		return
 	end
+	local side = if below then "below" else "above"
 	if row.kind ~= "commit" or tid == nil or tid == "" or tid == row.changeId then
-		notify(state, "warning", "Pick a different commit to place it above.")
+		notify(state, "warning", "Pick a different commit to place it " .. side .. ".")
 		return
 	end
-	local args = { "move", ref, "--above", tid }
+	local args = { "move", ref, "--" .. side, tid }
 	local what = change_what(row)
 	local names = names_of({ row, target })
-	confirm_rewrite(state, "Move " .. what .. " above " .. target.id, {
+	confirm_rewrite(state, "Move " .. what .. " " .. side .. " " .. target.id, {
 		"Reorders history on " .. table.concat(names, " and ") .. ".",
 	}, names, { row.changeId :: string, tid }, args, function()
 		fresh_move(state, row, function()
-			mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " above " .. target.id)
+			mutate(state, "Moving…", args, MUTATE_TIMEOUT_MS, "Moved " .. what .. " " .. side .. " " .. target.id)
 		end)
 	end)
 end
@@ -3024,6 +3087,7 @@ end
 local function finish_sheet(state: State, value: string?)
 	local sheet = state.sheet
 	state.sheet = nil
+	state.board_text = nil -- a cancelled drag goes back on the next read
 	if sheet and value ~= nil and sheet.done then
 		sheet.done(value)
 	end
@@ -3426,9 +3490,53 @@ local function drop_on(state: State, value: string)
 		elseif op == "squash" then
 			action_squash(state, target)
 		elseif op == "above" then
-			action_place_above(state, target)
+			action_place(state, target)
 		end
 	end)
+end
+
+-- A card dragged on the drag-and-drop board (window.luau):
+-- `<source key>:<lane key>:<neighbour key>:<1 when below it>`. The lane is
+-- `U` (Uncommitted), `N` (New branch) or a branch row's key; the neighbour
+-- is the card now next to it there. Runs the same guarded actions as the
+-- block's board, on the dragged row; anything refused puts the card back.
+local function native_drop(state: State, value: string)
+	local src, lane, near, below = string.match(value, "^([^:]+):([^:]+):([^:]*):([01])$")
+	local source = state.rows[index_of(state, src)]
+	if source == nil or (source.kind ~= "file" and source.kind ~= "commit") then
+		notify(state, "warning", "That card is gone: the workspace changed.")
+	else
+		table.clear(state.marked)
+		state.cursor = source.key
+		state.diff = nil
+		local neighbour = state.rows[index_of(state, near)]
+		local target = state.rows[index_of(state, lane)]
+		guarded(state, function()
+			if lane == "U" then
+				if source.kind == "commit" then
+					action_uncommit(state)
+				end
+			elseif lane == "N" then
+				if source.kind == "file" then
+					action_commit(state, NEW_BRANCH)
+				else
+					action_move(state, NEW_BRANCH)
+				end
+			elseif target == nil or target.kind ~= "branch" or target.branch == nil or target.branch == "" then
+				notify(state, "warning", "Drop it on a named branch.")
+			elseif source.kind == "file" then
+				action_commit(state, target.branch)
+			elseif neighbour and neighbour.kind == "commit" then
+				action_place(state, neighbour, below == "1")
+			else
+				action_move(state, target.branch)
+			end
+		end)
+	end
+	if state.sheet == nil and state.busy == nil then
+		state.board_text = nil
+		sync_board(state)
+	end
 end
 
 tern.block.define("workspace", {
@@ -3656,6 +3764,19 @@ tern.block.define("workspace", {
 			if state.sheet == nil and state.diff == nil and state.view == "board"
 				and (index_of(state, ev.value) > 0 or (lane ~= nil and lane >= 1 and lane <= #state.lanes + 1)) then
 				state.viewport = ev.value
+			end
+			return
+		end
+		if ev.ev == "action" and ev.act == "native_board" then
+			sync_board(state, true)
+			return
+		end
+		if ev.ev == "action" and ev.act == "native_drop" and type(ev.value) == "string" then
+			if state.sheet == nil then
+				native_drop(state, ev.value)
+			else
+				state.board_text = nil
+				sync_board(state)
 			end
 			return
 		end
