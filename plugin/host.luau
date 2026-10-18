@@ -353,6 +353,15 @@ local function board_files(state: State): (string, string)
 	return table.concat(lines, "\n"), tern.json.encode({ root = state.root, lanes = tern.json.array(lanes) })
 end
 
+local function pending_drop(root: string): State?
+	for _, state in running do
+		if state.root == root and state.drop_pending and alive(state) then
+			return state
+		end
+	end
+	return nil
+end
+
 -- Rewrites the drag-and-drop board when the workspace changed, if it exists
 -- (`create` makes it). The key file goes first: the window maps a reloaded
 -- board's cards through it.
@@ -362,10 +371,11 @@ local function sync_board(state: State, create: boolean?)
 	if state.model == nil or not (state.board_requested or tern.fs.exists(path)) then
 		return
 	end
+	local pending = pending_drop(state.root)
+	if pending and (pending ~= state or state.sheet or state.busy) then
+		return
+	end
 	if state.drop_pending then
-		if state.sheet or state.busy then
-			return
-		end
 		-- The drag's action ended (done, refused or cancelled): put every card where it now is.
 		state.drop_pending, state.drop_hinted, state.board_text = nil, nil, nil
 	end
@@ -3811,14 +3821,17 @@ tern.block.define("workspace", {
 			return
 		end
 		if ev.ev == "action" and ev.act == "native_drop" and type(ev.value) == "string" then
-			if state.sheet == nil then
+			local pending = pending_drop(state.root)
+			if pending then
+				notify(pending, "warning", "Finish the pending board action first", "Then drag again. Esc in its GitButler block cancels it.")
+			elseif state.sheet == nil then
 				native_drop(state, ev.value)
 			else
 				-- One drop at a time. The board is rewritten when the open sheet
 				-- closes, which also puts this card back; rewriting now would also
 				-- move the pending card before its action finished.
 				state.drop_pending = true
-				state.cx:toast("warning", "Finish “" .. state.sheet.title .. "” first", "Then drag again. Esc in the GitButler block cancels it.")
+				notify(state, "warning", "Finish “" .. state.sheet.title .. "” first", "Then drag again. Esc in the GitButler block cancels it.")
 			end
 			return
 		end

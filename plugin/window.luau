@@ -511,12 +511,12 @@ local function board_of(snap: any): drag.Board?
 	return board
 end
 
-local function map_keys(text: string?, board: drag.Board): ({ [string]: string }?, { string }?)
+local function map_keys(root: string, text: string?, board: drag.Board): ({ [string]: string }?, { string }?)
 	if text == nil then
 		return nil, nil
 	end
 	local ok, data = pcall(tern.json.decode, text)
-	if not ok then
+	if not ok or type(data) ~= "table" or data.root ~= root then
 		return nil, nil
 	end
 	return drag.bind(board, data)
@@ -550,7 +550,7 @@ local function on_board(cx: WindowCx, root: string, path: string, snap: any)
 		return
 	end
 	if change == "reload" then
-		local keys, lane_keys = map_keys(key_text, board)
+		local keys, lane_keys = map_keys(root, key_text, board)
 		if keys and lane_keys then
 			w.keys, w.lane_keys, w.board, w.key_text = keys, lane_keys, board, key_text
 		else
@@ -559,7 +559,7 @@ local function on_board(cx: WindowCx, root: string, path: string, snap: any)
 		return
 	end
 	if last and key_text ~= w.key_text then
-		local keys, lane_keys = map_keys(key_text, last)
+		local keys, lane_keys = map_keys(root, key_text, last)
 		if keys == nil or lane_keys == nil then
 			-- New metadata arrived before its Markdown. Never reinterpret the
 			-- displayed cards; wait for a snapshot carrying matching identities.
@@ -628,19 +628,17 @@ local function open_board(root: string, path: string, deadline: number)
 	end)
 end
 
--- Watchers live in this VM, so a plugin reload or a new window starts with
--- none: find open board panes by their file name (the pane title) and read
--- their workspace root from the key file.
 local function reattach(cx: WindowCx)
 	local dir = tern.plugin.data .. "/boards/"
 	for _, p in cx.session:panes() do
-		if p.kind == "board" and string.match(p.title, "%.md$") and tern.fs.exists(dir .. p.title .. ".json") then
+		local path = p.path
+		if p.kind == "board" and path and string.sub(path, 1, #dir) == dir and tern.fs.exists(path .. ".json") then
 			local ok, data = pcall(function()
-				return tern.json.decode(tern.fs.read(dir .. p.title .. ".json", 4194304))
+				return tern.json.decode(tern.fs.read(path .. ".json", 4194304))
 			end)
 			local root = if ok and type(data) == "table" and type(data.root) == "string" then data.root else nil
-			if root and gb.board_path(root) == dir .. p.title and (watches[root] == nil or watches[root].pane ~= p.pane) then
-				attach(root, dir .. p.title, p.pane)
+			if root and gb.board_path(root) == path and (watches[root] == nil or watches[root].pane ~= p.pane) then
+				attach(root, path, p.pane)
 			end
 		end
 	end

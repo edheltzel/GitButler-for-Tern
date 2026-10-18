@@ -44,7 +44,7 @@ for _, name in { "gb", "drag" } do
     local chunk = assert(loadstring(sources[name], name)); setfenv(chunk, env); modules[name] = chunk()
 end
 local path = modules.gb.board_path(root)
-local boardPane = { pane = 2, kind = "board", title = string.match(path, "([^/]+)$") }
+local boardPane = { pane = 2, kind = "board", title = string.match(path, "([^/]+)$"), path = path }
 local workspace = { pane = 1, block = "gitbutler.workspace", cwd = root }
 local cx = {
     toast = function(_, _, title, detail) table.insert(notices, { title = title, detail = detail }) end,
@@ -162,16 +162,17 @@ local function start(generation, metadata, live)
     assert(#events == 0, "initial projection must bind without resync")
 end
 for _, trigger in { "reload", "window_start" } do
-    for _, invalid in { "partial", "unreadable", "nonobject" } do
+    for _, invalid in { "partial", "unreadable", "nonobject", "foreign" } do
         local saved_panes, saved_read, saved_board_read = cx.session.panes, tern.fs.read, cx.board.read
         regression("reattach " .. trigger .. " after " .. invalid .. " sidecar", function()
             table.clear(timers); table.clear(events); table.clear(window_starts)
             files[path .. ".json"] = "initial"
             snapshot = snap("reattach", "c-a1", "c-b1")
             local broken_path = modules.gb.board_path("/partial-fixture")
-            local broken = { pane = 3, kind = "board", title = string.match(broken_path, "([^/]+)$") }
-            files[broken_path .. ".json"] = if invalid == "nonobject" then "nonobject" else '{"root":'
+            local broken = { pane = 3, kind = "board", title = string.match(broken_path, "([^/]+)$"), path = broken_path }
+            files[broken_path .. ".json"] = if invalid == "nonobject" then "nonobject" elseif invalid == "foreign" then "foreign-entry" else '{"root":'
             decoded.nonobject = "not a root record"
+            decoded["foreign-entry"] = projection("c-a1", "c-b1")
             cx.session.panes = function() return { workspace, broken, boardPane } end
             tern.fs.read = function(target)
                 if invalid == "unreadable" and target == broken_path .. ".json" then error("read interrupted") end
@@ -196,6 +197,33 @@ for _, trigger in { "reload", "window_start" } do
         end)
         cx.session.panes, tern.fs.read, cx.board.read = saved_panes, saved_read, saved_board_read
     end
+end
+regression("distinct workspace board paths", function()
+    local first, second = "/work/Ab/repo", "/work/BA/repo"
+    assert(modules.gb.board_path(first) ~= modules.gb.board_path(second), "distinct roots must never share a projection path")
+    local long = modules.gb.board_path("/work/" .. string.rep("long-parent/", 30) .. "repo")
+    for component in string.gmatch(long, "[^/]+") do
+        assert(#component <= 255, "board paths must fit the filesystem's component limit")
+    end
+end)
+for _, change in { "reload", "metadata" } do
+    regression("foreign sidecar during " .. change, function()
+        start("owned", projection("c-a1", "c-b1"))
+        local foreign = projection("c-a1", "c-b1")
+        foreign.root = "/other-workspace"
+        decoded.foreign = foreign; files[path .. ".json"] = "foreign"
+        if change == "reload" then snapshot = snap("foreign", "c-a1", "c-b1") end
+        poll()
+        local moved = table.remove(snapshot.lanes[2].cards, 1); table.insert(snapshot.lanes[1].cards, moved)
+        poll()
+        for _, event in events do assert(event.act ~= "native_drop", "foreign metadata must never authorize a drop") end
+        files[path .. ".json"] = "regression"
+        snapshot = snap("restored", "c-a1", "c-b1")
+        poll(); table.clear(events)
+        moved = table.remove(snapshot.lanes[2].cards, 1); table.insert(snapshot.lanes[1].cards, moved)
+        poll()
+        assert(#events == 1 and events[1].value == "c-a1:U::1", "matching workspace metadata must retain ordinary dragging")
+    end)
 end
 for renamed = 1, 4 do
     for _, separate_read in { false, true } do
@@ -254,9 +282,24 @@ regression("complete snapshot at the read limit", function()
 end)
 do
     local blocks, status = {}, nil
+    local host_panes = { { pane = 1 } }
+    local hold_status, pending_status = false, {}
+    local managed = { [root] = true, ["/work/Ab/repo"] = true, ["/work/BA/repo"] = true }
+    local saved_exists, saved_read = tern.fs.exists, tern.fs.read
+    tern.fs.exists = function(target)
+        for managed_root in managed do
+            if target == managed_root .. "/.git" or target == managed_root .. "/.git/gitbutler" then return true end
+        end
+        return saved_exists(target)
+    end
+    tern.fs.read = function(target)
+        local managed_root = string.match(target, "^(.*)/%.git/HEAD$")
+        if managed_root and managed[managed_root] then return "ref: refs/heads/gitbutler/workspace" end
+        return saved_read(target)
+    end
     tern.ui = {}
     tern.block = { define = function(name, definition) blocks[name] = definition end }
-    tern.pane = { list = function() return { { pane = 1 } } end }
+    tern.pane = { list = function() return host_panes end }
     tern.kv = { get = function() return "board" end }
     tern.fs.mkdir = function() end
     tern.fs.write = function(target, text) files[target] = text end
@@ -271,6 +314,7 @@ do
     tern.process = { run = function(argv, _, done)
         assert(argv[4] == "status", "projection checks must not mutate the repository")
         decoded["{}"] = status
+        if hold_status then table.insert(pending_status, done); return end
         done({ stdout = "{}", stderr = "", status = 0 })
     end }
     modules.lenses = {}
@@ -323,6 +367,70 @@ do
                 assert(state.sheet and state.sheet.title == "New branch name", "an assigned file must remain actionable through its projected row key")
             end
         end)
+    end
+    regression("two workspaces keep separate generated boards", function()
+        host_panes = { { pane = 3 }, { pane = 4 } }
+        status = { uncommittedChanges = { { cliId = "u1", filePath = "work.txt", changeType = "modified" } }, stacks = {} }
+        local first_path, first_text
+        for i, managed_root in { "/work/Ab/repo", "/work/BA/repo" } do
+            local bcx = { pane = i + 2, cwd = managed_root, cols = 80, rows = 40, render = function() end, toast = function() end }
+            local state = blocks.workspace.init(bcx, {}, nil)
+            blocks.workspace.event(state, { ev = "action", act = "native_board" }, bcx)
+            local target = modules.gb.board_path(managed_root)
+            assert(decoded[files[target .. ".json"]].root == managed_root, "each written sidecar must belong to its workspace")
+            if i == 1 then first_path, first_text = target, files[target .. ".json"] end
+        end
+        assert(files[first_path .. ".json"] == first_text, "writing the second workspace must not overwrite the first sidecar")
+    end)
+    for _, phase in { "sheet", "busy", "closed" } do
+        regression("pending drop across panels while " .. phase, function()
+            host_panes = { { pane = 1 }, { pane = 2 } }
+            pending_status = {}
+            status = { uncommittedChanges = { { cliId = "u1", filePath = "work.txt", changeType = "modified" } }, stacks = {} }
+            local function panel(pane)
+                local bcx = { pane = pane, cwd = root, cols = 80, rows = 40, render = function() end, toast = function() end }
+                return blocks.workspace.init(bcx, {}, nil), bcx
+            end
+            local owner, ocx = panel(1)
+            blocks.workspace.event(owner, { ev = "action", act = "native_board" }, ocx)
+            local key = decoded[files[path .. ".json"]].lanes[1].cards[1]
+            local drop = { ev = "action", act = "native_drop", value = key .. ":N::1" }
+            files[path] = "pending card position"
+            hold_status = phase == "busy"
+            blocks.workspace.event(owner, drop, ocx)
+            hold_status = false
+            assert(owner.sheet or owner.busy, "the first drop must own a pending action")
+            local pending_keys = files[path .. ".json"]
+            local sibling, scx = panel(2)
+            assert(files[path] == "pending card position" and files[path .. ".json"] == pending_keys, "a sibling's initial refresh must preserve a pending projection")
+            blocks.workspace.key(sibling, { text = "r", name = "r" }, scx)
+            blocks.workspace.event(sibling, { ev = "action", act = "native_board" }, scx)
+            assert(files[path] == "pending card position" and files[path .. ".json"] == pending_keys, "polls and forced resyncs must preserve another panel's pending projection")
+            blocks.workspace.event(sibling, drop, scx)
+            assert(sibling.sheet == nil and sibling.busy == nil and not sibling.drop_pending, "a second panel must not take ownership of a pending drop")
+            host_panes = { { pane = 1 }, { pane = 2 }, { pane = 3 } }
+            local other_root = "/work/Ab/repo"
+            local other_cx = { pane = 3, cwd = other_root, cols = 80, rows = 40, render = function() end, toast = function() end }
+            local other = blocks.workspace.init(other_cx, {}, nil)
+            blocks.workspace.event(other, { ev = "action", act = "native_board" }, other_cx)
+            assert(decoded[files[modules.gb.board_path(other_root) .. ".json"]].root == other_root, "a pending drop must not block another workspace")
+            assert(files[path] == "pending card position", "another workspace must not disturb the pending projection")
+            if phase == "closed" then
+                host_panes = { { pane = 2 } }
+                blocks.workspace.event(sibling, { ev = "action", act = "native_board" }, scx)
+            else
+                if phase == "busy" then
+                    assert(#pending_status == 1, "the first drop must retain its original status read")
+                    pending_status[1]({ stdout = "{}", stderr = "", status = 0 })
+                end
+                blocks.workspace.key(owner, { name = "escape" }, ocx)
+            end
+            assert(files[path] ~= "pending card position", "cancellation or closing the owner must release the projection")
+            blocks.workspace.event(sibling, drop, scx)
+            assert(sibling.sheet and sibling.sheet.title == "New branch name", "the sibling must accept the next drop after release")
+            blocks.workspace.key(sibling, { name = "escape" }, scx)
+        end)
+        hold_status = false
     end
 end
 for _, failure in failures do print(failure) end
