@@ -489,9 +489,15 @@ type Watch = {
 local watches: { [string]: Watch } = {}
 local WATCH_MS = 400
 
-local function board_of(snap: any): drag.Board
+local function board_of(snap: any): drag.Board?
+	if (snap.more or 0) > 0 then
+		return nil
+	end
 	local board: drag.Board = { lanes = {}, cards = {}, titles = {}, texts = {} }
 	for _, lane in (if type(snap.lanes) == "table" then snap.lanes else {}) do
+		if (lane.more or 0) > 0 then
+			return nil
+		end
 		local ids: { string }, texts: { string } = {}, {}
 		for _, card in (if type(lane.cards) == "table" then lane.cards else {}) do
 			table.insert(ids, tostring(card.id))
@@ -530,6 +536,11 @@ local function on_board(cx: WindowCx, root: string, path: string, snap: any)
 		return
 	end
 	local board = board_of(snap)
+	if board == nil then
+		watches[root] = nil
+		cx:toast("error", "The GitButler board exceeds Tern's 500-row read limit", "Drag-and-drop is disabled. Use the GitButler workspace panel.")
+		return
+	end
 	local ok, read = pcall(tern.fs.read, path .. ".json", 4194304)
 	local key_text = if ok then read :: string else nil
 	local last = w.board
@@ -542,9 +553,7 @@ local function on_board(cx: WindowCx, root: string, path: string, snap: any)
 		local keys, lane_keys = map_keys(key_text, board)
 		if keys and lane_keys then
 			w.keys, w.lane_keys, w.board, w.key_text = keys, lane_keys, board, key_text
-		elseif last == nil and w.resynced == nil then
-			-- Attached to a board edited before: one rewrite. A later reload that
-			-- doesn't map yet waits for the next read (the key file goes first).
+		else
 			resync(cx, root, w, board)
 		end
 		return

@@ -51,16 +51,18 @@ function drag.bind(board: Board, data: any): ({ [string]: string }?, { string }?
 	return keys, lanes
 end
 
--- Whether the lanes themselves are unchanged (same ids, same order). A user
--- who adds, removes or reorders a lane changes them; that is not a drag.
 function drag.same_lanes(a: Board, b: Board): boolean
-	return table.concat(a.lanes, "\0") == table.concat(b.lanes, "\0")
+	if table.concat(a.lanes, "\0") ~= table.concat(b.lanes, "\0") then
+		return false
+	end
+	for i in a.lanes do
+		if (a.titles and a.titles[i]) ~= (b.titles and b.titles[i]) then
+			return false
+		end
+	end
+	return true
 end
 
--- How the board changed between two reads: "same" lanes (cards may have
--- moved), "reload" (every lane id is new: the block rewrote the file), or
--- "edit" (some lane ids survive in a new set or order: the user added,
--- removed or reordered lanes; its cards must not be remapped by position).
 function drag.change(old: Board, new: Board): string
 	if drag.same_lanes(old, new) then
 		return "same"

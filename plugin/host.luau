@@ -332,8 +332,10 @@ local function board_files(state: State): (string, string)
 		table.insert(lanes, { key = key, title = title, cards = cards })
 	end
 	local files: { Row } = {}
-	for _, r in state.lanes[1] or {} do
-		table.insert(files, r)
+	for _, r in state.rows do
+		if r.kind == "file" then
+			table.insert(files, r)
+		end
 	end
 	lane("U", "Uncommitted", files)
 	for _, b in state.rows do
