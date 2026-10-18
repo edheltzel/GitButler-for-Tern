@@ -8,6 +8,7 @@ local OPEN = "plugin.gitbutler.open"
 local POLL_MS = 30 * 1000
 local STALE_MS = 3 * 1000
 local READ_TIMEOUT_MS = 15 * 1000
+local BLOCK_START_MS = 1500
 local SWEEP_MS = 10
 -- What the status segment shows for one workspace root.
 type Summary = {
@@ -450,7 +451,7 @@ local function deliver(cx: WindowCx, root: string, ev: { [string]: any })
 	if pane and existed then
 		cx.session:event(pane, ev)
 	elseif pane then
-		tern.timer(1500, function(tcx: WindowCx?)
+		tern.timer(BLOCK_START_MS, function(tcx: WindowCx?)
 			if tcx then
 				tcx.session:event(pane :: number, ev)
 			end
@@ -473,49 +474,54 @@ for _, a in ACTIONS do
 	})
 end
 
--- The drag-and-drop board: Tern's own Markdown board block, which can drag
--- cards (plugin blocks get no drag events). The workspace block writes it
--- (gb.board_path) and rewrites it on every change, which reloads it with new
--- lane and card ids; a reload is mapped to row keys by position through the
--- key file. A card that changed lane or place under unchanged lanes is one
--- drag (drag.moved), handed to the block as a `native_drop`, which runs the
--- same guarded actions as its own board. Lanes the user added, removed or
--- reordered don't map: the block rewrites the board once for them.
-type Watch = { pane: number, keys: { [string]: string }, lane_keys: { string }, board: drag.Board?, resynced: string? }
+-- The native task board and its sidecar are read asynchronously. Row keys
+-- live in local Markdown anchors, so drag.bind can prove that a snapshot
+-- belongs to its metadata before native ids are rebound. Reloads change all
+-- native ids; hand lane edits preserve some and request one rewrite.
+type Watch = {
+	pane: number,
+	keys: { [string]: string },
+	lane_keys: { string },
+	board: drag.Board?, -- the last read the keys were mapped onto
+	key_text: string?, -- the key file those keys came from
+	resynced: string?, -- lane ids a rewrite was already asked for
+}
 local watches: { [string]: Watch } = {}
 local WATCH_MS = 400
 
 local function board_of(snap: any): drag.Board
-	local board: drag.Board = { lanes = {}, cards = {} }
+	local board: drag.Board = { lanes = {}, cards = {}, titles = {}, texts = {} }
 	for _, lane in (if type(snap.lanes) == "table" then snap.lanes else {}) do
-		local ids: { string } = {}
+		local ids: { string }, texts: { string } = {}, {}
 		for _, card in (if type(lane.cards) == "table" then lane.cards else {}) do
 			table.insert(ids, tostring(card.id))
+			table.insert(texts, card.text or "")
 		end
 		table.insert(board.lanes, tostring(lane.id))
 		table.insert(board.cards, ids)
+		table.insert(board.titles :: { string }, lane.title or "")
+		table.insert(board.texts :: { { string } }, texts)
 	end
 	return board
 end
 
-local function map_keys(path: string, board: drag.Board): ({ [string]: string }?, { string }?)
-	local ok, text = pcall(tern.fs.read, path .. ".json", 4194304)
-	local data = if ok then tern.json.decode(text :: string) else nil
-	if type(data) ~= "table" or type(data.lanes) ~= "table" or #data.lanes ~= #board.cards then
+local function map_keys(text: string?, board: drag.Board): ({ [string]: string }?, { string }?)
+	if text == nil then
 		return nil, nil
 	end
-	local keys: { [string]: string }, lane_keys: { string } = {}, {}
-	for i, ids in board.cards do
-		local lane = data.lanes[i]
-		if type(lane) ~= "table" or type(lane.cards) ~= "table" or #lane.cards ~= #ids then
-			return nil, nil
-		end
-		lane_keys[i] = lane.key
-		for j, id in ids do
-			keys[id] = lane.cards[j]
-		end
+	local ok, data = pcall(tern.json.decode, text)
+	if not ok then
+		return nil, nil
 	end
-	return keys, lane_keys
+	return drag.bind(board, data)
+end
+
+local function resync(cx: WindowCx, root: string, w: Watch, board: drag.Board)
+	local sig = table.concat(board.lanes, "\0")
+	if w.resynced ~= sig then
+		w.resynced = sig
+		deliver(cx, root, { ev = "action", act = "native_board" })
+	end
 end
 
 local function on_board(cx: WindowCx, root: string, path: string, snap: any)
@@ -524,21 +530,39 @@ local function on_board(cx: WindowCx, root: string, path: string, snap: any)
 		return
 	end
 	local board = board_of(snap)
-	if w.board == nil or not drag.same_lanes(w.board :: drag.Board, board) then
-		local keys, lane_keys = map_keys(path, board)
+	local ok, read = pcall(tern.fs.read, path .. ".json", 4194304)
+	local key_text = if ok then read :: string else nil
+	local last = w.board
+	local change = if last then drag.change(last, board) else "reload"
+	if change == "edit" then
+		resync(cx, root, w, board)
+		return
+	end
+	if change == "reload" then
+		local keys, lane_keys = map_keys(key_text, board)
 		if keys and lane_keys then
-			w.keys, w.lane_keys, w.board = keys, lane_keys, board
-		else
-			w.board = nil
-			local sig = table.concat(board.lanes, "\0")
-			if w.resynced ~= sig then
-				w.resynced = sig
-				deliver(cx, root, { ev = "action", act = "native_board" })
-			end
+			w.keys, w.lane_keys, w.board, w.key_text = keys, lane_keys, board, key_text
+		elseif last == nil and w.resynced == nil then
+			-- Attached to a board edited before: one rewrite. A later reload that
+			-- doesn't map yet waits for the next read (the key file goes first).
+			resync(cx, root, w, board)
 		end
 		return
 	end
-	local id, lane, near, below = drag.moved(w.board :: drag.Board, board)
+	if last and key_text ~= w.key_text then
+		local keys, lane_keys = map_keys(key_text, last)
+		if keys == nil or lane_keys == nil then
+			-- New metadata arrived before its Markdown. Never reinterpret the
+			-- displayed cards; wait for a snapshot carrying matching identities.
+			return
+		end
+		w.keys, w.lane_keys, w.key_text = keys, lane_keys, key_text
+	end
+	local id, lane, near, below, ambiguous = drag.moved(last :: drag.Board, board)
+	if ambiguous then
+		resync(cx, root, w, board)
+		return
+	end
 	w.board = board
 	local source = if id then w.keys[id] else nil
 	local target = w.lane_keys[lane]
@@ -569,28 +593,54 @@ local function watch_board(root: string, path: string)
 	end)
 end
 
+local function attach(root: string, path: string, pane: number)
+	local fresh = watches[root] == nil
+	watches[root] = { pane = pane, keys = {}, lane_keys = {} }
+	if fresh then
+		watch_board(root, path)
+	end
+end
+
 -- Opens the board once the block has written it (a fresh block needs a moment).
-local function open_board(root: string, path: string, tries: number)
+local function open_board(root: string, path: string, deadline: number)
 	tern.timer(200, function(cx: WindowCx?)
 		if cx == nil then
 			return
 		end
 		if not tern.fs.exists(path) then
-			if tries > 0 then
-				open_board(root, path, tries - 1)
+			if tern.now() < deadline then
+				open_board(root, path, deadline)
 			else
 				cx:toast("error", "The GitButler board was not written", path)
 			end
 			return
 		end
-		local pane = cx.board:open(path, { how = "beside" })
-		local fresh = watches[root] == nil
-		watches[root] = { pane = pane, keys = {}, lane_keys = {} }
-		if fresh then
-			watch_board(root, path)
-		end
+		attach(root, path, cx.board:open(path, { how = "beside" }))
 	end)
 end
+
+-- Watchers live in this VM, so a plugin reload or a new window starts with
+-- none: find open board panes by their file name (the pane title) and read
+-- their workspace root from the key file.
+local function reattach(cx: WindowCx)
+	local dir = tern.plugin.data .. "/boards/"
+	for _, p in cx.session:panes() do
+		if p.kind == "board" and string.match(p.title, "%.md$") and tern.fs.exists(dir .. p.title .. ".json") then
+			local ok, text = pcall(tern.fs.read, dir .. p.title .. ".json", 4194304)
+			local data = if ok then tern.json.decode(text :: string) else nil
+			local root = if type(data) == "table" and type(data.root) == "string" then data.root else nil
+			if root and gb.board_path(root) == dir .. p.title and (watches[root] == nil or watches[root].pane ~= p.pane) then
+				attach(root, dir .. p.title, p.pane)
+			end
+		end
+	end
+end
+tern.timer(0, function(cx: WindowCx?)
+	if cx then
+		reattach(cx)
+	end
+end)
+tern.on("window_start", reattach)
 
 tern.command({
 	id = "board",
@@ -607,7 +657,7 @@ tern.command({
 			return
 		end
 		deliver(cx, root, { ev = "action", act = "native_board" })
-		open_board(root, gb.board_path(root), 25)
+		open_board(root, gb.board_path(root), tern.now() + BLOCK_START_MS + READ_TIMEOUT_MS)
 	end,
 })
 

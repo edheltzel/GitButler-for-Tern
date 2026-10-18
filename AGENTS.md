@@ -51,6 +51,7 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
   - `timeout 8 tern ctl --control /tmp/ttc/ctl.sock plugins run plugin.gitbutler.open`
   - `timeout 8 tern ctl --control /tmp/ttc/ctl.sock shot NAME` (writes `/tmp/ttc/target/shots/tern/live/NAME.png`; the file can land a few seconds after the reply, so wait before reading it)
   - `tern ctl … key cmd+t` opens a tab with Tern's configured shell (fish), which lenses need
+  - `tern ctl … board drag <lane> <slot> <card>` drags a card on the focused drag-and-drop board through the same path as the mouse (0-based lane and slot; `<card>` is one word of the card's title, since quoted words split)
 - Verify each mutation with `but status --json` in `/tmp/gbs/work`.
 - Lenses only appear in shells spawned after the plugin loaded (they need the spawn env) and with Tern's shell integration. `tern new tab` from the CLI starts the login shell (bash here), which shows plain output; test lenses in a tab Tern opens with its configured shell (fish).
 - The status bar is off unless `"status_bar": true` is in `settings.json`, and the setting takes effect only after Tern restarts.
@@ -90,7 +91,7 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
 - `plugin/AGENTS.md`: the Tern package: file ownership, architecture boundaries (budgets, `but`-only writes, half separation), Luau coding standards, verification commands
 - `regroup/AGENTS.md`: dated status check-ins; only the latest is kept
 
-Owned here (no child doc): `DESIGN.md` (surfaces, JSON fields relied on, action → command map, findings), `README.md` (user tutorial), `docs/images/` (README screenshots: `tern ctl … shot NAME` in the isolated Tern against a demo repo, copied from `/tmp/ttc/target/shots/tern/live/`; keep them outside `plugin/` so they never reload Tern). Retake a screenshot when the UI it shows changes. `.codegraph/`: the codegraph index; only its `.gitignore` is tracked, the database stays local. `todo.txt` / `done.txt` at the root: the project's task list (tuxedo, tag `+gitbutler-for-tern`), git-ignored so it stays local. It is the source of truth: `~/todo.txt` routes to it (`@route @mirror`) and a local watcher copies its open tasks there, so edit tasks here, never in the global copy.
+Owned here (no child doc): `DESIGN.md` (surfaces, JSON fields, action → command map, findings), `README.md` (user tutorial), and `docs/images/` (README screenshots and `demo.gif` / `demo.mp4`). Capture screenshots with `tern ctl … shot NAME` in the isolated Tern; record its window with `screencapture -v -l<window id>`. Retake media when the demonstrated UI changes. Keep media outside `plugin/` so it never reloads Tern. The README's inline GIF links to the repository MP4; replace both together, without a separate GitHub attachment upload. `.codegraph/` owns the local codegraph index; only its `.gitignore` is tracked. Root `todo.txt` / `done.txt` are the git-ignored tuxedo source of truth (tag `+gitbutler-for-tern`); `~/todo.txt` routes here (`@route @mirror`) and a local watcher mirrors open tasks there, so edit the local list, never the global copy. Root `TODO.md` is the user's local Tern board mirror, git-ignored and never committed.
 
 ## References
 

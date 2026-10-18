@@ -2,6 +2,7 @@
 
 local gb = require("./gb")
 local width = require("./width")
+local drag = require("./drag")
 local ui = tern.ui
 local letter = gb.letter
 local STATUS_TEXT = gb.STATUS_TEXT
@@ -74,6 +75,9 @@ type State = {
 	view: string, -- "lanes" | "graph" | "stacks" | "branches" | "board"
 	diff: DiffState?, -- the diff shown in place of the view (⏎), until Esc
 	board_text: string?, -- the drag-and-drop board last written (gb.board_path); nil rewrites it
+	board_requested: boolean?, -- latch creation/resync until a loaded, idle model can write it
+	drop_pending: boolean?, -- a drag's action is still running: its card stays where it was dropped
+	drop_hinted: boolean?, -- that drag's sheet was already announced
 }
 
 -- `but diff <id> --json` for one file, commit or branch, shown in the panel.
@@ -314,17 +318,18 @@ local function board_files(state: State): (string, string)
 	local lines = { "# GitButler · " .. basename(state.root), "" }
 	local lanes: { any } = {}
 	local function lane(key: string, title: string, rows: { Row })
+		title = string.gsub(title, "%s+", " ")
 		table.insert(lines, "## " .. title)
 		table.insert(lines, "")
 		local cards = tern.json.array()
 		for _, r in rows do
-			table.insert(lines, "- [ ] " .. (string.gsub(r.label, "%s+", " ")))
+			table.insert(lines, "- [ ] " .. drag.label(r.label, r.key))
 			table.insert(cards, r.key)
 		end
 		if #rows > 0 then
 			table.insert(lines, "")
 		end
-		table.insert(lanes, { key = key, cards = cards })
+		table.insert(lanes, { key = key, title = title, cards = cards })
 	end
 	local files: { Row } = {}
 	for _, r in state.lanes[1] or {} do
@@ -339,23 +344,33 @@ local function board_files(state: State): (string, string)
 					table.insert(commits, r)
 				end
 			end
-			lane(b.key, b.label, commits)
+			lane(b.key, "Branch: " .. b.label, commits)
 		end
 	end
 	lane("N", "New branch", {})
-	return table.concat(lines, "\n"), tern.json.encode({ lanes = tern.json.array(lanes) })
+	return table.concat(lines, "\n"), tern.json.encode({ root = state.root, lanes = tern.json.array(lanes) })
 end
 
 -- Rewrites the drag-and-drop board when the workspace changed, if it exists
 -- (`create` makes it). The key file goes first: the window maps a reloaded
 -- board's cards through it.
 local function sync_board(state: State, create: boolean?)
+	if create then state.board_requested = true end
 	local path = gb.board_path(state.root)
-	if state.model == nil or not (create or tern.fs.exists(path)) then
+	if state.model == nil or not (state.board_requested or tern.fs.exists(path)) then
 		return
 	end
+	if state.drop_pending then
+		if state.sheet or state.busy then
+			return
+		end
+		-- The drag's action ended (done, refused or cancelled): put every card where it now is.
+		state.drop_pending, state.drop_hinted, state.board_text = nil, nil, nil
+	end
 	local md, keys = board_files(state)
-	if md == state.board_text and not create then
+	-- Keys too: a rewrite that keeps every subject changes commit keys only.
+	local text = md .. "\0" .. keys
+	if text == state.board_text and not state.board_requested then
 		return
 	end
 	local ok = pcall(function()
@@ -363,7 +378,8 @@ local function sync_board(state: State, create: boolean?)
 		tern.fs.write(path .. ".json", keys)
 		tern.fs.write(path, md)
 	end)
-	state.board_text = if ok then md else nil
+	state.board_text = if ok then text else nil
+	if ok then state.board_requested = nil end
 end
 
 local function selected(state: State): Row?
@@ -1624,7 +1640,6 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 			return
 		end
 		state.busy = nil
-		state.board_text = nil -- the next read puts every dragged card where it now is
 		if r.ok then
 			local function show(workspace: any)
 				if state.verification ~= show then
@@ -1663,6 +1678,23 @@ local function mutate(state: State, label: string, args: { string }, timeout_ms:
 	end
 end
 
+-- After a drag's action steps: say where its sheet waits, or rewrite the
+-- board once nothing is left running.
+local function drop_settle(state: State)
+	if not state.drop_pending then
+		return
+	end
+	local sheet = state.sheet
+	if sheet and not state.drop_hinted and (sheet.kind == "prompt" or sheet.kind == "pick" or sheet.kind == "confirm") then
+		state.drop_hinted = true
+		local how = if sheet.kind == "confirm" then "Press y in the GitButler block to confirm"
+			elseif sheet.kind == "pick" then "Choose in the GitButler block"
+			else "Type it in the GitButler block, then ⏎"
+		state.cx:toast("info", sheet.title, how .. ". Esc puts the card back.")
+	end
+	sync_board(state)
+end
+
 -- Runs a read (`--json` included in `args`) for an action that needs data first.
 -- Escape bumps `state.reads` while `busy`; this callback is dropped so it
 -- cannot open a sheet or take a fast path after cancel. `fail` is the closed
@@ -1679,6 +1711,7 @@ local function read(state: State, label: string, args: { string }, use: (data: a
 		end
 		state.busy = nil
 		if token ~= state.reads then
+			drop_settle(state)
 			state.cx:render()
 			return
 		end
@@ -1689,6 +1722,7 @@ local function read(state: State, label: string, args: { string }, use: (data: a
 		else
 			notify(state, "error", command_line(args) .. ": " .. (r.err or "failed"))
 		end
+		drop_settle(state)
 		state.cx:render()
 	end)
 	if err then
@@ -1769,7 +1803,6 @@ local function apply_status(state: State, data: any): gb.Model?
 	state.seen = tern.json.encode(data)
 	state.fetched = os.time()
 	build_rows(state)
-	sync_board(state)
 	return model
 end
 
@@ -3087,7 +3120,6 @@ end
 local function finish_sheet(state: State, value: string?)
 	local sheet = state.sheet
 	state.sheet = nil
-	state.board_text = nil -- a cancelled drag goes back on the next read
 	if sheet and value ~= nil and sheet.done then
 		sheet.done(value)
 	end
@@ -3498,11 +3530,15 @@ end
 -- A card dragged on the drag-and-drop board (window.luau):
 -- `<source key>:<lane key>:<neighbour key>:<1 when below it>`. The lane is
 -- `U` (Uncommitted), `N` (New branch) or a branch row's key; the neighbour
--- is the card now next to it there. Runs the same guarded actions as the
--- block's board, on the dragged row; anything refused puts the card back.
+-- is the card now next to it there. Like `but tui`'s squash and move modes:
+-- a file amends into the commit it lands next to (a branch with no commits
+-- gets a new commit), a commit moves next to its neighbour or to the branch,
+-- and a commit on Uncommitted is uncommitted. Runs the same guarded actions
+-- as the block's board, on the dragged row; anything refused puts the card back.
 local function native_drop(state: State, value: string)
 	local src, lane, near, below = string.match(value, "^([^:]+):([^:]+):([^:]*):([01])$")
 	local source = state.rows[index_of(state, src)]
+	state.drop_pending, state.drop_hinted = true, nil
 	if source == nil or (source.kind ~= "file" and source.kind ~= "commit") then
 		notify(state, "warning", "That card is gone: the workspace changed.")
 	else
@@ -3524,8 +3560,12 @@ local function native_drop(state: State, value: string)
 				end
 			elseif target == nil or target.kind ~= "branch" or target.branch == nil or target.branch == "" then
 				notify(state, "warning", "Drop it on a named branch.")
+			elseif near ~= "" and (neighbour == nil or neighbour.kind ~= "commit" or neighbour.bkey ~= target.key) then
+				notify(state, "warning", "That drop target changed. Refresh the board and drag again.")
+			elseif source.kind == "file" and neighbour and neighbour.kind == "commit" then
+				action_amend(state, neighbour)
 			elseif source.kind == "file" then
-				action_commit(state, target.branch)
+				action_move(state, target.branch)
 			elseif neighbour and neighbour.kind == "commit" then
 				action_place(state, neighbour, below == "1")
 			else
@@ -3533,10 +3573,7 @@ local function native_drop(state: State, value: string)
 			end
 		end)
 	end
-	if state.sheet == nil and state.busy == nil then
-		state.board_text = nil
-		sync_board(state)
-	end
+	drop_settle(state)
 end
 
 tern.block.define("workspace", {
@@ -3775,8 +3812,11 @@ tern.block.define("workspace", {
 			if state.sheet == nil then
 				native_drop(state, ev.value)
 			else
-				state.board_text = nil
-				sync_board(state)
+				-- One drop at a time. The board is rewritten when the open sheet
+				-- closes, which also puts this card back; rewriting now would also
+				-- move the pending card before its action finished.
+				state.drop_pending = true
+				state.cx:toast("warning", "Finish “" .. state.sheet.title .. "” first", "Then drag again. Esc in the GitButler block cancels it.")
 			end
 			return
 		end

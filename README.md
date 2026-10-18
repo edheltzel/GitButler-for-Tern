@@ -11,11 +11,9 @@
 
 GitButler for Tern is a [Tern](https://docs.stencil.so/tern/index.html) plugin that brings [GitButler](https://gitbutler.com) workspaces into your terminal. It adds a status bar segment, a workspace panel with one lane per branch stack, view tabs, sync status chips and diffs in place, native rendering for `but status`, `but diff`, `but show` and `but oplog`, and palette commands for setting up a folder, pulling upstream, and opening `but tui` or the GitButler app. Every change it makes runs through the `but` CLI, so it never writes with raw git.
 
-![Pressing ⌥⇧⌘G opens the workspace block beside the shell; an edit in the shell appears in the Uncommitted lane, and ⏎ shows its diff in place](docs/images/demo.gif)
+[![Drag cache.py into response-cache, then confirm the amendment](docs/images/demo.gif)](docs/images/demo.mp4)
 
-The full 74-second demo: commit from the panel, flip through the five views, commit on the board, pull, undo, and open `but tui` ([MP4](docs/images/demo.mp4)).
-
-https://github.com/user-attachments/assets/89888417-9b98-4774-9684-eb0e0a3b9935
+Watch the [64-second demo](docs/images/demo.mp4): review a diff, switch views, drag files into commits, uncommit by dragging, pull, undo, and open `but tui`. The five-second preview above shows a scripted drag and its confirmation.
 
 ![A shell beside the GitButler for Tern workspace block: the 1 upstream commit and 1 unpushed branch chips, the view tabs, an Uncommitted lane, the response-cache stack and the selected file's details](docs/images/workspace.png)
 
@@ -143,7 +141,11 @@ In this tutorial, you:
   - Actions use the same prompts and confirmation guards as the keyboard and palette; confirmation sheets show the exact `but` command. Anything that rewrites pushed history or deletes work asks for **y**. See the action reference in [DESIGN.md](DESIGN.md) for each operation's confirmation rules.
 
   ![The board view: the toolbar, the Uncommitted column with checkboxes, a column per stack, and drop buttons on the branches and commits](docs/images/board.png)
-- Run **GitButler: Open drag-and-drop board** to drag cards the way the GitButler desktop app does. It opens Tern's own board beside the workspace block: an **Uncommitted** lane with your changed files, a lane per branch with its commits (newest first), and **New branch**. Drag a file onto a branch to commit it there, or onto New branch to commit it to a new branch. Drag a commit onto another branch or between two commits to move it there, onto Uncommitted to uncommit it, or onto New branch to move it to a new branch. Each drag runs the same prompts and confirmations as the workspace block (the commit message or `y` sheet opens in the block); cancel one, or let `but` refuse it, and the card goes back. The board is a generated file in the plugin's data folder, rewritten whenever the workspace changes, so ticking, adding or editing cards has no effect.
+- Run **GitButler: Open drag-and-drop board** to drag cards with the mouse. It opens Tern's own board beside the workspace block: an **Uncommitted** lane with your changed files, a lane per branch with its commits (newest first), and **New branch**. Drops work like `but tui`'s squash and move modes:
+  - Drag a file next to a commit to amend it into that commit (no new commit, no message). On a branch with no commits it becomes that branch's first commit, and on New branch it starts a new branch; both ask for a message.
+  - Drag a commit between two commits, on its own branch or another one, to move it there; onto Uncommitted to uncommit it; or onto New branch to move it to a new branch.
+  - Each drop runs the same confirmation as the workspace block, which takes focus: press **y**, or type the message and press **⏎**. A toast says what it's waiting for. Until you answer, the card stays where you dropped it and the board takes no other drag; **Esc** cancels and puts the card back, as does anything `but` refuses.
+  - The board is a generated file in the plugin's data folder, rewritten whenever the workspace changes, so ticking, adding or editing cards has no effect.
 - **f** pulls, and so does a click on the upstream chip: it checks the target branch (for example `origin/main`), says `Already up to date` when there is nothing new, and otherwise shows the new commit count and predicted branch or uncommitted-file conflicts. Press **y** to check again; a changed plan requires another confirmation before pulling. Pulling rebases every applied branch onto the target. The result reports actual branch and unresolved file conflicts, or warns when the result or worktree status could not be verified; **z** undoes the pull. If a sheet is open, the result waits for it to close. When the target is ahead, the chip reads **N upstream commits**; after a pull it turns green and reads **Up to date**.
 
   ![The Pull origin/main sheet: 1 new commit on origin/main, what pulling does, and the but pull command](docs/images/pull.png)
