@@ -14,7 +14,7 @@ local root, data = "/fixture", "/plugin-data"
 local commands, timers, files, decoded, events, modules = {}, {}, {}, {}, {}, {}
 local snapshot
 local failures, notices = {}, {}
-local window_starts = {}
+local window_starts, pane_closures = {}, {}
 local function regression(name, run)
     local ok, err = pcall(run)
     if not ok then table.insert(failures, name .. ": " .. tostring(err)) end
@@ -34,6 +34,7 @@ local tern = {
     command = function(def) commands[def.id] = def.run end,
     on = function(name, handler)
         if name == "window_start" then table.insert(window_starts, handler) end
+        if name == "pane_closed" then table.insert(pane_closures, handler) end
     end,
     override = function() end,
     chrome = { status = function() end }, route = { open = function() end },
@@ -440,7 +441,14 @@ do
                 assert(decoded[files[modules.gb.board_path(other_root) .. ".json"]].root == other_root, "a pending drop must not block another workspace")
                 assert(files[path] == "pending card position", "another workspace must not disturb the pending projection")
                 if phase == "closed" or phase == "closed-busy" or phase == "closed-sheet" then
-                    host_panes = { { pane = 2 } }
+                    local closing_cx = { session = {
+                        panes = function() return { { pane = 2, block = "gitbutler.workspace" } } end,
+                        event = function(_, pane, event)
+                            assert(pane == 2, "closure must reach the surviving workspace panel")
+                            blocks.workspace.event(sibling, event, scx)
+                        end,
+                    } }
+                    for _, handler in pane_closures do handler({ pane = 1 }, closing_cx) end
                     if phase == "closed-busy" then
                         assert(#pending_status == 1, "the closed owner must retain its original status read")
                         pending_status[1]({ stdout = "{}", stderr = "", status = 0 })

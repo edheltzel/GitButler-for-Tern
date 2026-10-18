@@ -712,6 +712,11 @@ tern.on("focus", function(ev: FocusEvent, cx: WindowCx)
 		check_git_block(cx, ev.pane)
 	end
 end)
-tern.on("pane_closed", function(ev: PaneEvent, _cx: WindowCx)
+tern.on("pane_closed", function(ev: PaneEvent, cx: WindowCx)
 	warned[ev.pane] = nil
+	for _, pane in cx.session:panes() do
+		if pane.block == WORKSPACE and pane.pane ~= ev.pane then
+			cx.session:event(pane.pane, { ev = "action", act = "native_closed", value = ev.pane })
+		end
+	end
 end)

@@ -3816,6 +3816,21 @@ tern.block.define("workspace", {
 			end
 			return
 		end
+		if ev.ev == "action" and ev.act == "native_closed" and type(ev.value) == "number" then
+			local owner = running[ev.value]
+			if owner and owner.root == state.root then
+				running[ev.value] = nil
+				if owner.timer then
+					owner.timer:cancel()
+					owner.timer = nil
+				end
+				if owner.drop_pending then
+					state.board_text = nil
+					sync_board(state)
+				end
+			end
+			return
+		end
 		if ev.ev == "action" and ev.act == "native_board" then
 			sync_board(state, true)
 			return
