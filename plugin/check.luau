@@ -4,6 +4,7 @@
 
 local parse = require("./parse")
 local width = require("./width")
+local drag = require("./drag")
 
 local function lines(text: string): { string }
 	local out = {}
@@ -231,5 +232,35 @@ a, b, c, d = width.slice(10, 10, 4)
 assert(a == 8 and b == 10 and c and not d, "at the bottom: the marker above and three rows")
 a, b, c, d = width.slice(0, 1, -1)
 assert(a == 1 and b == 0 and not c and not d, "an empty list is an empty range, whatever the room")
+
+-- The drag-and-drop board: one drag between two reads, or none.
+local base: drag.Board = { lanes = { "U", "A", "B", "N" }, cards = { { "f1" }, { "a1", "a2" }, { "b1" }, {} } }
+local id, lane, near, below = drag.moved(base, { lanes = base.lanes, cards = { {}, { "a1", "a2" }, { "f1", "b1" }, {} } })
+assert(id == "f1" and lane == 3 and near == "b1" and not below, "a file dropped on B, above b1")
+id, lane, near, below = drag.moved(base, { lanes = base.lanes, cards = { { "f1" }, { "a1" }, { "b1", "a2" }, {} } })
+assert(id == "a2" and lane == 3 and near == "b1" and below, "a commit dropped last in B goes below b1")
+id, lane, near, below = drag.moved(base, { lanes = base.lanes, cards = { { "f1" }, { "a2", "a1" }, { "b1" }, {} } })
+assert((id == "a2" and near == "a1" and not below) or (id == "a1" and near == "a2" and below), "a reorder within A")
+assert(lane == 2, "a reorder stays in its lane")
+id = drag.moved(base, { lanes = base.lanes, cards = base.cards })
+assert(id == nil, "an unchanged board is no drag")
+-- A lane inserted after Uncommitted shifts every card's lane index; that is not a drag.
+local inserted: drag.Board = { lanes = { "U", "X", "A", "B", "N" }, cards = { { "f1" }, {}, { "a1", "a2" }, { "b1" }, {} } }
+assert(not drag.same_lanes(base, inserted), "an inserted lane changes the lanes")
+id = drag.moved(base, inserted)
+assert(id == nil, "an inserted lane moves no card")
+assert(drag.change(base, inserted) == "edit", "an inserted lane is a hand edit, never remapped by position")
+-- Two equal-sized lanes swapped by hand: card counts still match the key file, so a positional
+-- remap would bind A's card to B's row. Surviving lane ids make it an edit.
+local swapped: drag.Board = { lanes = { "U", "B", "A", "N" }, cards = { { "f1" }, { "b1" }, { "a1", "a2" }, {} } }
+assert(drag.change(base, swapped) == "edit", "swapped lanes are a hand edit")
+assert(drag.moved(base, swapped) == nil, "swapped lanes move no card")
+local reloaded: drag.Board = { lanes = { "U2", "A2", "B2", "N2" }, cards = { { "g1" }, { "c1", "c2" }, { "d1" }, {} } }
+assert(drag.change(base, reloaded) == "reload", "all-new lane ids are the block's rewrite")
+assert(drag.change(base, { lanes = base.lanes, cards = base.cards }) == "same", "unchanged lanes")
+-- Two drags in one polling interval must not amend f1 into a1 while a1
+-- still belongs to another branch in the host model.
+id = drag.moved(base, { lanes = base.lanes, cards = { {}, { "a2" }, { "f1", "a1", "b1" }, {} } })
+assert(id == nil, "multiple moved cards must not become a single misleading amend")
 
 print("parse: ok")

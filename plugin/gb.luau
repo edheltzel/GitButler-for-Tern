@@ -254,4 +254,21 @@ gb.STATUS_TEXT = {
 	integrated = { "Integrated", "accent" },
 } :: { [string]: { string } }
 
+-- The drag-and-drop board of a workspace: a Markdown task board in the
+-- plugin's data folder that the host writes and Tern's board block shows,
+-- plus `<path>.json`, the row keys of its lanes and cards. Kept out of the
+-- repo so it never shows up as a change.
+-- ponytail: local paths only; a remote host writes on its own disk.
+function gb.board_path(root: string): string
+	local parts = { tern.plugin.data, "boards" }
+	for i = 1, #root, 100 do
+		local part = string.gsub(string.sub(root, i, i + 99), ".", function(c)
+			return string.format("%02x", string.byte(c))
+		end)
+		table.insert(parts, part)
+	end
+	table.insert(parts, "workspace.md")
+	return table.concat(parts, "/")
+end
+
 return gb

@@ -5,7 +5,7 @@ import tempfile
 
 
 plugin = Path(__file__).parent
-sources = {name: (plugin / f"{name}.luau").read_text() for name in ("gb", "width", "host")}
+sources = {name: (plugin / f"{name}.luau").read_text() for name in ("gb", "width", "drag", "host")}
 bootstrap = "local sources = {\n" + "\n".join(
     f"[{json.dumps(name)}] = {json.dumps(source, ensure_ascii=False)},"
     for name, source in sources.items()
@@ -32,6 +32,7 @@ local tern = {
     ui = ui,
     block = { define = function(name, definition) blocks[name] = definition end },
     getenv = function() return nil end,
+    plugin = { data = "/nonexistent" },
     fs = {
         exists = function(path) return path == root .. "/.git" or path == root .. "/.git/gitbutler" end,
         read = function(path)
@@ -65,7 +66,7 @@ local tern = {
 }
 local env = setmetatable({ tern = tern }, { __index = getfenv() })
 env.require = function(path) return modules[string.sub(path, 3)] or {} end
-for _, name in { "gb", "width", "host" } do
+for _, name in { "gb", "width", "drag", "host" } do
     local chunk = assert(loadstring(sources[name], name))
     setfenv(chunk, env)
     modules[name] = chunk()
@@ -1462,6 +1463,58 @@ for _, rows in { 23, 24 } do
         end
         check(returned, "short board: interior windows have no upward browsing control")
     end
+end
+do
+    local state, cx = init("board", 160, 60, 2)
+    local source, branch = row_key(state, "f-u1"), row_key(state, "b-b1")
+    workspace.event(state, { ev = "action", act = "native_drop", value = source .. ":" .. branch .. ":c-gone:0" }, cx)
+    check(state.sheet == nil, "a stale native neighbour must not fall back to amending the branch tip")
+end
+do
+    local saved_fs, saved_encode, saved_array = tern.fs, tern.json.encode, tern.json.array
+    local disk = {}
+    local path = modules.gb.board_path(root)
+    tern.fs = {
+        exists = function(p) return disk[p] ~= nil or saved_fs.exists(p) end,
+        read = function(p) return disk[p] or saved_fs.read(p) end,
+        mkdir = function() end,
+        write = function(p, text) disk[p] = text end,
+    }
+    local function encode(value)
+        if type(value) ~= "table" then return tostring(value) end
+        local keys = {}
+        for key in value do table.insert(keys, key) end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        local parts = {}
+        for _, key in keys do table.insert(parts, tostring(key) .. "=" .. encode(value[key])) end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    tern.json.encode = encode
+    tern.json.array = function(value) return value or {} end
+    pending_status = {}
+    local state, cx = init("board", 160, 60, 2)
+    workspace.event(state, { ev = "action", act = "native_board" }, cx)
+    local initial = pending_status[1]
+    pending_status = nil
+    initial({ stdout = "{}", stderr = "", status = 0 })
+    check(disk[path] ~= nil, "a board requested before status loads must be written after status succeeds")
+    workspace.event(state, { ev = "action", act = "native_board" }, cx)
+    workspace.key(state, { name = "?", text = "?" }, cx)
+    disk[path] = "dragged while help was open"
+    local source, branch, near = row_key(state, "f-u1"), row_key(state, "b-b1"), row_key(state, "c-c1")
+    local drop = { ev = "action", act = "native_drop", value = source .. ":" .. branch .. ":" .. near .. ":0" }
+    workspace.event(state, drop, cx)
+    check(disk[path] == "dragged while help was open", "refusing a drop during help must not rewrite under the open sheet")
+    workspace.key(state, { name = "escape" }, cx)
+    check(disk[path] ~= "dragged while help was open", "a refused drop must reconcile when an unrelated sheet closes")
+    workspace.event(state, drop, cx)
+    check(state.sheet ~= nil, "the native file drop must open its amend confirmation")
+    disk[path] = "pending amend"
+    workspace.event(state, { ev = "action", act = "native_board" }, cx)
+    check(disk[path] == "pending amend", "a forced resync must preserve the card while its confirmation is pending")
+    workspace.key(state, { name = "escape" }, cx)
+    check(disk[path] ~= "pending amend", "cancelling must release a deferred resync")
+    tern.fs, tern.json.encode, tern.json.array = saved_fs, saved_encode, saved_array
 end
 for i = 1, math.min(12, #failures) do print(failures[i]) end
 for i = math.max(13, #failures - 5), #failures do print(failures[i]) end

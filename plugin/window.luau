@@ -1,12 +1,14 @@
 --!strict
 
 local gb = require("./gb")
+local drag = require("./drag")
 
 local WORKSPACE = "gitbutler.workspace"
 local OPEN = "plugin.gitbutler.open"
 local POLL_MS = 30 * 1000
 local STALE_MS = 3 * 1000
 local READ_TIMEOUT_MS = 15 * 1000
+local BLOCK_START_MS = 1500
 local SWEEP_MS = 10
 -- What the status segment shows for one workspace root.
 type Summary = {
@@ -442,8 +444,19 @@ local ACTIONS = {
 	{ "help", "GitButler: Show workspace keys" },
 }
 
-local function send_action(cx: WindowCx, pane: number, act: string)
-	cx.session:event(pane, { ev = "action", act = act })
+-- Opens (or focuses) the workspace block and hands it `ev`. A block that is
+-- only now starting gets it once its first view is up.
+local function deliver(cx: WindowCx, root: string, ev: { [string]: any })
+	local pane, existed = open_workspace(cx, root)
+	if pane and existed then
+		cx.session:event(pane, ev)
+	elseif pane then
+		tern.timer(BLOCK_START_MS, function(tcx: WindowCx?)
+			if tcx then
+				tcx.session:event(pane :: number, ev)
+			end
+		end)
+	end
 end
 
 for _, a in ACTIONS do
@@ -454,22 +467,207 @@ for _, a in ACTIONS do
 		icon = "git-branch",
 		run = function(cx: WindowCx)
 			local root = focused_root(cx)
-			if root == nil then
-				return
-			end
-			local pane, existed = open_workspace(cx, root)
-			if pane and existed then
-				send_action(cx, pane, act)
-			elseif pane then
-				tern.timer(1500, function(tcx: WindowCx?)
-					if tcx then
-						send_action(tcx, pane :: number, act)
-					end
-				end)
+			if root then
+				deliver(cx, root, { ev = "action", act = act })
 			end
 		end,
 	})
 end
+
+-- The native task board and its sidecar are read asynchronously. Row keys
+-- live in local Markdown anchors, so drag.bind can prove that a snapshot
+-- belongs to its metadata before native ids are rebound. Reloads change all
+-- native ids; hand lane edits preserve some and request one rewrite.
+type Watch = {
+	pane: number,
+	keys: { [string]: string },
+	lane_keys: { string },
+	board: drag.Board?, -- the last read the keys were mapped onto
+	key_text: string?, -- the key file those keys came from
+	resynced: string?, -- lane ids a rewrite was already asked for
+}
+local watches: { [string]: Watch } = {}
+local WATCH_MS = 400
+
+local function board_of(snap: any): drag.Board?
+	if (snap.more or 0) > 0 then
+		return nil
+	end
+	local board: drag.Board = { lanes = {}, cards = {}, titles = {}, texts = {} }
+	for _, lane in (if type(snap.lanes) == "table" then snap.lanes else {}) do
+		if (lane.more or 0) > 0 then
+			return nil
+		end
+		local ids: { string }, texts: { string } = {}, {}
+		for _, card in (if type(lane.cards) == "table" then lane.cards else {}) do
+			table.insert(ids, tostring(card.id))
+			table.insert(texts, card.text or "")
+		end
+		table.insert(board.lanes, tostring(lane.id))
+		table.insert(board.cards, ids)
+		table.insert(board.titles :: { string }, lane.title or "")
+		table.insert(board.texts :: { { string } }, texts)
+	end
+	return board
+end
+
+local function map_keys(root: string, text: string?, board: drag.Board): ({ [string]: string }?, { string }?)
+	if text == nil then
+		return nil, nil
+	end
+	local ok, data = pcall(tern.json.decode, text)
+	if not ok or type(data) ~= "table" or data.root ~= root then
+		return nil, nil
+	end
+	return drag.bind(board, data)
+end
+
+local function resync(cx: WindowCx, root: string, w: Watch, board: drag.Board)
+	local sig = table.concat(board.lanes, "\0")
+	if w.resynced ~= sig then
+		w.resynced = sig
+		deliver(cx, root, { ev = "action", act = "native_board" })
+	end
+end
+
+local function on_board(cx: WindowCx, root: string, path: string, snap: any)
+	local w = watches[root]
+	if w == nil then
+		return
+	end
+	local board = board_of(snap)
+	if board == nil then
+		watches[root] = nil
+		cx:toast("error", "The GitButler board exceeds Tern's 500-row read limit", "Drag-and-drop is disabled. Use the GitButler workspace panel.")
+		return
+	end
+	local ok, read = pcall(tern.fs.read, path .. ".json", 4194304)
+	local key_text = if ok then read :: string else nil
+	local last = w.board
+	local change = if last then drag.change(last, board) else "reload"
+	if change == "edit" then
+		resync(cx, root, w, board)
+		return
+	end
+	if change == "reload" then
+		local keys, lane_keys = map_keys(root, key_text, board)
+		if keys and lane_keys then
+			w.keys, w.lane_keys, w.board, w.key_text = keys, lane_keys, board, key_text
+		else
+			resync(cx, root, w, board)
+		end
+		return
+	end
+	if last and key_text ~= w.key_text then
+		local keys, lane_keys = map_keys(root, key_text, last)
+		if keys == nil or lane_keys == nil then
+			-- New metadata arrived before its Markdown. Never reinterpret the
+			-- displayed cards; wait for a snapshot carrying matching identities.
+			return
+		end
+		w.keys, w.lane_keys, w.key_text = keys, lane_keys, key_text
+	end
+	local id, lane, near, below, ambiguous = drag.moved(last :: drag.Board, board)
+	if ambiguous then
+		resync(cx, root, w, board)
+		return
+	end
+	w.board = board
+	local source = if id then w.keys[id] else nil
+	local target = w.lane_keys[lane]
+	if source and target then
+		local value = source .. ":" .. target .. ":" .. (if near then w.keys[near] or "" else "") .. ":" .. (if below then "1" else "0")
+		deliver(cx, root, { ev = "action", act = "native_drop", value = value })
+	end
+end
+
+local function watch_board(root: string, path: string)
+	tern.timer(WATCH_MS, function(cx: WindowCx?)
+		local w = watches[root]
+		if w == nil then
+			return
+		end
+		if cx and cx.session:pane(w.pane) == nil then
+			watches[root] = nil
+			return
+		end
+		if cx then
+			cx.board:read(w.pane, { rows = 500 }):next(function(snap: any, _err: any, tcx: WindowCx?)
+				if snap and tcx then
+					on_board(tcx, root, path, snap)
+				end
+			end)
+		end
+		watch_board(root, path)
+	end)
+end
+
+local function attach(root: string, path: string, pane: number)
+	local fresh = watches[root] == nil
+	watches[root] = { pane = pane, keys = {}, lane_keys = {} }
+	if fresh then
+		watch_board(root, path)
+	end
+end
+
+-- Opens the board once the block has written it (a fresh block needs a moment).
+local function open_board(root: string, path: string, deadline: number)
+	tern.timer(200, function(cx: WindowCx?)
+		if cx == nil then
+			return
+		end
+		if not tern.fs.exists(path) then
+			if tern.now() < deadline then
+				open_board(root, path, deadline)
+			else
+				cx:toast("error", "The GitButler board was not written", path)
+			end
+			return
+		end
+		attach(root, path, cx.board:open(path, { how = "beside" }))
+	end)
+end
+
+local function reattach(cx: WindowCx)
+	local dir = tern.plugin.data .. "/boards/"
+	for _, p in cx.session:panes() do
+		local path = p.path
+		if p.kind == "board" and path and string.sub(path, 1, #dir) == dir and tern.fs.exists(path .. ".json") then
+			local ok, data = pcall(function()
+				return tern.json.decode(tern.fs.read(path .. ".json", 4194304))
+			end)
+			local root = if ok and type(data) == "table" and type(data.root) == "string" then data.root else nil
+			if root and gb.board_path(root) == path and (watches[root] == nil or watches[root].pane ~= p.pane) then
+				attach(root, path, p.pane)
+			end
+		end
+	end
+end
+tern.timer(0, function(cx: WindowCx?)
+	if cx then
+		reattach(cx)
+	end
+end)
+tern.on("window_start", reattach)
+
+tern.command({
+	id = "board",
+	title = "GitButler: Open drag-and-drop board",
+	icon = "git-branch",
+	run = function(cx: WindowCx)
+		local root = focused_root(cx)
+		if root == nil then
+			return
+		end
+		local w = watches[root]
+		if w and cx.session:pane(w.pane) then
+			cx.layout:focus(w.pane)
+			return
+		end
+		deliver(cx, root, { ev = "action", act = "native_board" })
+		open_board(root, gb.board_path(root), tern.now() + BLOCK_START_MS + READ_TIMEOUT_MS)
+	end,
+})
 
 -- Tern's git block writes with raw git (stage, commit, checkout, stash),
 -- which a GitButler workspace must not take. Its `git.*` keys are view
@@ -514,6 +712,11 @@ tern.on("focus", function(ev: FocusEvent, cx: WindowCx)
 		check_git_block(cx, ev.pane)
 	end
 end)
-tern.on("pane_closed", function(ev: PaneEvent, _cx: WindowCx)
+tern.on("pane_closed", function(ev: PaneEvent, cx: WindowCx)
 	warned[ev.pane] = nil
+	for _, pane in cx.session:panes() do
+		if pane.block == WORKSPACE and pane.pane ~= ev.pane then
+			cx.session:event(pane.pane, { ev = "action", act = "native_closed", value = ev.pane })
+		end
+	end
 end)

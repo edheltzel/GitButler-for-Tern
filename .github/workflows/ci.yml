@@ -41,4 +41,4 @@ jobs:
 
       - name: Test
         run: |
-          cd plugin && luau check.luau | grep -qx 'parse: ok' && python3 check-layout.py
+          cd plugin && luau check.luau | grep -qx 'parse: ok' && python3 check-layout.py && python3 check-board.py

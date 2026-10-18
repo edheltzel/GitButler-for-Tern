@@ -11,11 +11,9 @@
 
 GitButler for Tern is a [Tern](https://docs.stencil.so/tern/index.html) plugin that brings [GitButler](https://gitbutler.com) workspaces into your terminal. It adds a status bar segment, a workspace panel with one lane per branch stack, view tabs, sync status chips and diffs in place, native rendering for `but status`, `but diff`, `but show` and `but oplog`, and palette commands for setting up a folder, pulling upstream, and opening `but tui` or the GitButler app. Every change it makes runs through the `but` CLI, so it never writes with raw git.
 
-![Pressing ⌥⇧⌘G opens the workspace block beside the shell; an edit in the shell appears in the Uncommitted lane, and ⏎ shows its diff in place](docs/images/demo.gif)
+[![Drag cache.py into response-cache, then confirm the amendment](docs/images/demo.gif)](docs/images/demo.mp4)
 
-The full 74-second demo: commit from the panel, flip through the five views, commit on the board, pull, undo, and open `but tui` ([MP4](docs/images/demo.mp4)).
-
-https://github.com/user-attachments/assets/89888417-9b98-4774-9684-eb0e0a3b9935
+Watch the [64-second demo](docs/images/demo.mp4): review a diff, switch views, drag files into commits, uncommit by dragging, pull, undo, and open `but tui`. The five-second preview above shows a scripted drag and its confirmation.
 
 ![A shell beside the GitButler for Tern workspace block: the 1 upstream commit and 1 unpushed branch chips, the view tabs, an Uncommitted lane, the response-cache stack and the selected file's details](docs/images/workspace.png)
 
@@ -135,7 +133,7 @@ In this tutorial, you:
 - Press **?** in the workspace block for every key: **m** moves a file or commit to another branch, **A** absorbs changes into the commits they belong to, **e** rewords a commit or renames a branch, **n** / **N** make a parallel or stacked branch, **a** / **u** apply or unapply branches, and **p** / **P** push a branch or open a pull request.
 - Click a tab at the top of the workspace block, or press **1**-**5** (**v** cycles), to switch views: **lanes** (the default: an Uncommitted card plus a card per stack with its branches, commits and files on a colored line), **graph** (a commit graph with a lane per stack), **stacks** (one column per stack, like the GitButler app), **branches** (a branch list with the selected branch's commits, or the selected lane's uncommitted files) and **board** (below). Click a row to select it or double-click to show its diff in the panel; **Esc** goes back. In **lanes** and **graph**, details sit beside the list, or under it in a narrow pane. These previews show the selected file's change and assignment, a commit's ids, message and files, or a branch's base and newest commits as space allows; short panes omit fields and shorten lists. Enlarge the pane to see more details, or press **⏎** for the full diff in the panel. Every key works the same in each view, and the block remembers your choice. Long labels clip to fit; `↑ N more` / `↓ N more` mark hidden rows you can reach with the arrow keys. In the branches view, the commit-count badge reports commits not shown, and `+N files` beside a commit counts its hidden files.
 - The chips beside the tabs say where you stand, in GitButler's words: **Up to date** (green) or **N upstream commits** (amber), **Nothing to push** or **N unpushed branches**, plus **N diverged** (red: a pushed branch whose history changed, so its next push is a force push), **Conflicted**, and what is running while a command works. Click the upstream chip to pull. Each branch carries the GitButler desktop app's label: **Unpushed branch**, **Some unpushed**, **Nothing to push**, **Diverged** or **Integrated**.
-- The **board** view works like the GitButler desktop app, with the mouse. Tern blocks can't drag, so you click what you want to move, then click where it goes:
+- The **board** view works like the GitButler desktop app, with the mouse. The workspace block can't receive drags, so here you click what you want to move, then click where it goes (for real dragging, see the drag-and-drop board below):
   - Click a file, or tick the boxes of several, and the branches show **Commit here**, each commit shows **Amend**, and the New branch column offers **Commit to a new branch**.
   - Click a commit and other commits show **Squash** and **Above** (reorder), branches show **Move here**, and the Uncommitted column shows **Uncommit**. A committed file can **Move in** to another commit.
   - Use the toolbar's **←** / **→** buttons to browse columns and click **↑ N more** / **↓ N more** to browse cards. Short columns put **↑** / **↓** in the header when a marker cannot fit. When no cards fit, columns show only their headers; enlarge the pane or clear a notice with **r** to make room. Browsing keeps your selected change and checked files held while you reach another destination, including Uncommitted and New branch.
@@ -143,6 +141,12 @@ In this tutorial, you:
   - Actions use the same prompts and confirmation guards as the keyboard and palette; confirmation sheets show the exact `but` command. Anything that rewrites pushed history or deletes work asks for **y**. See the action reference in [DESIGN.md](DESIGN.md) for each operation's confirmation rules.
 
   ![The board view: the toolbar, the Uncommitted column with checkboxes, a column per stack, and drop buttons on the branches and commits](docs/images/board.png)
+- Run **GitButler: Open drag-and-drop board** to drag cards with the mouse. It opens Tern's own board beside the workspace block: an **Uncommitted** lane with your changed files, a lane per branch with its commits (newest first), and **New branch**. Drops work like `but tui`'s squash and move modes:
+  - Drag a file next to a commit to amend it into that commit (no new commit, no message). On a branch with no commits it becomes that branch's first commit, and on New branch it starts a new branch; both ask for a message.
+  - Drag a commit between two commits, on its own branch or another one, to move it there; onto Uncommitted to uncommit it; or onto New branch to move it to a new branch.
+  - Each drop uses the workspace block's prompts and confirmations, and the block takes focus: press **y** to confirm, or type the requested name or message and press **⏎**. A toast says what it's waiting for. Until the action finishes or is cancelled, the card stays where you dropped it and further drops are not applied. **Esc** in the workspace block cancels the pending prompt or confirmation and puts the card back, as does anything `but` refuses.
+  - The board is a generated file in the plugin's data folder, rewritten whenever the workspace changes, so ticking, adding or editing cards has no effect.
+  - If the board exceeds Tern's 500-row read limit, a toast reports that dragging is disabled. Use the workspace panel's board view for larger workspaces.
 - **f** pulls, and so does a click on the upstream chip: it checks the target branch (for example `origin/main`), says `Already up to date` when there is nothing new, and otherwise shows the new commit count and predicted branch or uncommitted-file conflicts. Press **y** to check again; a changed plan requires another confirmation before pulling. Pulling rebases every applied branch onto the target. The result reports actual branch and unresolved file conflicts, or warns when the result or worktree status could not be verified; **z** undoes the pull. If a sheet is open, the result waits for it to close. When the target is ahead, the chip reads **N upstream commits**; after a pull it turns green and reads **Up to date**.
 
   ![The Pull origin/main sheet: 1 new commit on origin/main, what pulling does, and the but pull command](docs/images/pull.png)
@@ -161,6 +165,7 @@ Two commands have a default chord: ⌥⇧⌘G opens the workspace block and ⌥�
 |---|---|---|---|
 | ⌥⇧⌘G | `open` | Open the workspace block | |
 | ⌥⇧⌘T | `tui` | Open `but tui` in a floating pane | |
+| | `board` | Open the drag-and-drop board | |
 | | `gui` | Open the GitButler app | |
 | | `commit` | Commit to a branch | c |
 | | `move` | Move the selection to a branch | m |
