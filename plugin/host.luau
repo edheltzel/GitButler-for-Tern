@@ -3821,6 +3821,11 @@ tern.block.define("workspace", {
 			return
 		end
 		if ev.ev == "action" and ev.act == "native_drop" and type(ev.value) == "string" then
+			for _, panel in running do
+				if panel.root == state.root then
+					panel.board_text = nil
+				end
+			end
 			local pending = pending_drop(state.root)
 			if pending then
 				notify(pending, "warning", "Finish the pending board action first", "Then drag again. Esc in its GitButler block cancels it.")

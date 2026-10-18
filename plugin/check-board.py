@@ -302,12 +302,19 @@ do
     tern.pane = { list = function() return host_panes end }
     tern.kv = { get = function() return "board" end }
     tern.fs.mkdir = function() end
-    tern.fs.write = function(target, text) files[target] = text end
+    local writes = 0
+    tern.fs.write = function(target, text) writes += 1; files[target] = text end
     tern.json.array = function(value) return value or {} end
-    local serial = 0
+    local function encode(value)
+        if type(value) ~= "table" then return string.format("%q", tostring(value)) end
+        local keys, parts = {}, {}
+        for key in value do table.insert(keys, key) end
+        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        for _, key in keys do table.insert(parts, encode(key) .. ":" .. encode(value[key])) end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
     tern.json.encode = function(value)
-        serial += 1
-        local text = "encoded-" .. serial
+        local text = encode(value)
         decoded[text] = value
         return text
     end
@@ -382,55 +389,77 @@ do
         end
         assert(files[first_path .. ".json"] == first_text, "writing the second workspace must not overwrite the first sidecar")
     end)
-    for _, phase in { "sheet", "busy", "closed" } do
-        regression("pending drop across panels while " .. phase, function()
-            host_panes = { { pane = 1 }, { pane = 2 } }
-            pending_status = {}
-            status = { uncommittedChanges = { { cliId = "u1", filePath = "work.txt", changeType = "modified" } }, stacks = {} }
-            local function panel(pane)
-                local bcx = { pane = pane, cwd = root, cols = 80, rows = 40, render = function() end, toast = function() end }
-                return blocks.workspace.init(bcx, {}, nil), bcx
-            end
-            local owner, ocx = panel(1)
-            blocks.workspace.event(owner, { ev = "action", act = "native_board" }, ocx)
-            local key = decoded[files[path .. ".json"]].lanes[1].cards[1]
-            local drop = { ev = "action", act = "native_drop", value = key .. ":N::1" }
-            files[path] = "pending card position"
-            hold_status = phase == "busy"
-            blocks.workspace.event(owner, drop, ocx)
-            hold_status = false
-            assert(owner.sheet or owner.busy, "the first drop must own a pending action")
-            local pending_keys = files[path .. ".json"]
-            local sibling, scx = panel(2)
-            assert(files[path] == "pending card position" and files[path .. ".json"] == pending_keys, "a sibling's initial refresh must preserve a pending projection")
-            blocks.workspace.key(sibling, { text = "r", name = "r" }, scx)
-            blocks.workspace.event(sibling, { ev = "action", act = "native_board" }, scx)
-            assert(files[path] == "pending card position" and files[path .. ".json"] == pending_keys, "polls and forced resyncs must preserve another panel's pending projection")
-            blocks.workspace.event(sibling, drop, scx)
-            assert(sibling.sheet == nil and sibling.busy == nil and not sibling.drop_pending, "a second panel must not take ownership of a pending drop")
-            host_panes = { { pane = 1 }, { pane = 2 }, { pane = 3 } }
-            local other_root = "/work/Ab/repo"
-            local other_cx = { pane = 3, cwd = other_root, cols = 80, rows = 40, render = function() end, toast = function() end }
-            local other = blocks.workspace.init(other_cx, {}, nil)
-            blocks.workspace.event(other, { ev = "action", act = "native_board" }, other_cx)
-            assert(decoded[files[modules.gb.board_path(other_root) .. ".json"]].root == other_root, "a pending drop must not block another workspace")
-            assert(files[path] == "pending card position", "another workspace must not disturb the pending projection")
-            if phase == "closed" then
-                host_panes = { { pane = 2 } }
-                blocks.workspace.event(sibling, { ev = "action", act = "native_board" }, scx)
-            else
-                if phase == "busy" then
-                    assert(#pending_status == 1, "the first drop must retain its original status read")
-                    pending_status[1]({ stdout = "{}", stderr = "", status = 0 })
+    for _, timing in { "before", "during" } do
+        for _, phase in { "sheet", "busy", "closed", "closed-busy", "closed-sheet" } do
+            regression("pending drop across panels while " .. phase .. ", sibling opened " .. timing, function()
+                host_panes = { { pane = 1 }, { pane = 2 } }
+                pending_status = {}
+                status = { uncommittedChanges = { { cliId = "u1", filePath = "work.txt", changeType = "modified" } }, stacks = {} }
+                local function panel(pane)
+                    local bcx = { pane = pane, cwd = root, cols = 80, rows = 40, render = function() end, toast = function() end }
+                    return blocks.workspace.init(bcx, {}, nil), bcx
                 end
-                blocks.workspace.key(owner, { name = "escape" }, ocx)
-            end
-            assert(files[path] ~= "pending card position", "cancellation or closing the owner must release the projection")
-            blocks.workspace.event(sibling, drop, scx)
-            assert(sibling.sheet and sibling.sheet.title == "New branch name", "the sibling must accept the next drop after release")
-            blocks.workspace.key(sibling, { name = "escape" }, scx)
-        end)
-        hold_status = false
+                local owner, ocx = panel(1)
+                blocks.workspace.event(owner, { ev = "action", act = "native_board" }, ocx)
+                local original, original_keys = files[path], files[path .. ".json"]
+                local sibling, scx
+                if timing == "before" then
+                    sibling, scx = panel(2)
+                    local before = writes
+                    blocks.workspace.key(sibling, { text = "r", name = "r" }, scx)
+                    assert(writes == before, "an unchanged refresh must not rewrite an already-synced board")
+                end
+                local key = decoded[files[path .. ".json"]].lanes[1].cards[1]
+                local drop = { ev = "action", act = "native_drop", value = key .. ":N::1" }
+                if phase == "closed-sheet" then
+                    blocks.workspace.key(owner, { text = "?", name = "?" }, ocx)
+                    assert(owner.sheet and owner.sheet.kind == "help", "an unrelated sheet must already be open")
+                end
+                files[path] = "pending card position"
+                hold_status = phase == "busy" or phase == "closed-busy"
+                blocks.workspace.event(owner, drop, ocx)
+                hold_status = false
+                assert(owner.sheet or owner.busy, "the first drop must own a pending action")
+                local pending_keys = files[path .. ".json"]
+                if timing == "during" then sibling, scx = panel(2) end
+                assert(files[path] == "pending card position" and files[path .. ".json"] == pending_keys, "a sibling's initial refresh must preserve a pending projection")
+                blocks.workspace.key(sibling, { text = "r", name = "r" }, scx)
+                if phase == "sheet" or phase == "busy" then
+                    blocks.workspace.event(sibling, { ev = "action", act = "native_board" }, scx)
+                end
+                assert(files[path] == "pending card position" and files[path .. ".json"] == pending_keys, "polls and forced resyncs must preserve another panel's pending projection")
+                if phase == "sheet" or phase == "busy" then
+                    blocks.workspace.event(sibling, drop, scx)
+                end
+                assert(sibling.sheet == nil and sibling.busy == nil and not sibling.drop_pending, "a second panel must not take ownership of a pending drop")
+                host_panes = { { pane = 1 }, { pane = 2 }, { pane = 3 } }
+                local other_root = "/work/Ab/repo"
+                local other_cx = { pane = 3, cwd = other_root, cols = 80, rows = 40, render = function() end, toast = function() end }
+                local other = blocks.workspace.init(other_cx, {}, nil)
+                blocks.workspace.event(other, { ev = "action", act = "native_board" }, other_cx)
+                assert(decoded[files[modules.gb.board_path(other_root) .. ".json"]].root == other_root, "a pending drop must not block another workspace")
+                assert(files[path] == "pending card position", "another workspace must not disturb the pending projection")
+                if phase == "closed" or phase == "closed-busy" or phase == "closed-sheet" then
+                    host_panes = { { pane = 2 } }
+                    if phase == "closed-busy" then
+                        assert(#pending_status == 1, "the closed owner must retain its original status read")
+                        pending_status[1]({ stdout = "{}", stderr = "", status = 0 })
+                    end
+                    blocks.workspace.key(sibling, { text = "r", name = "r" }, scx)
+                else
+                    if phase == "busy" then
+                        assert(#pending_status == 1, "the first drop must retain its original status read")
+                        pending_status[1]({ stdout = "{}", stderr = "", status = 0 })
+                    end
+                    blocks.workspace.key(owner, { name = "escape" }, ocx)
+                end
+                assert(files[path] == original and files[path .. ".json"] == original_keys, "cancellation or closing the owner must restore the authoritative projection on an ordinary refresh")
+                blocks.workspace.event(sibling, drop, scx)
+                assert(sibling.sheet and sibling.sheet.title == "New branch name", "the sibling must accept the next drop after release")
+                blocks.workspace.key(sibling, { name = "escape" }, scx)
+            end)
+            hold_status = false
+        end
     end
 end
 for _, failure in failures do print(failure) end
