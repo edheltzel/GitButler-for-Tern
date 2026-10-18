@@ -635,9 +635,10 @@ local function reattach(cx: WindowCx)
 	local dir = tern.plugin.data .. "/boards/"
 	for _, p in cx.session:panes() do
 		if p.kind == "board" and string.match(p.title, "%.md$") and tern.fs.exists(dir .. p.title .. ".json") then
-			local ok, text = pcall(tern.fs.read, dir .. p.title .. ".json", 4194304)
-			local data = if ok then tern.json.decode(text :: string) else nil
-			local root = if type(data) == "table" and type(data.root) == "string" then data.root else nil
+			local ok, data = pcall(function()
+				return tern.json.decode(tern.fs.read(dir .. p.title .. ".json", 4194304))
+			end)
+			local root = if ok and type(data) == "table" and type(data.root) == "string" then data.root else nil
 			if root and gb.board_path(root) == dir .. p.title and (watches[root] == nil or watches[root].pane ~= p.pane) then
 				attach(root, dir .. p.title, p.pane)
 			end

@@ -14,6 +14,7 @@ local root, data = "/fixture", "/plugin-data"
 local commands, timers, files, decoded, events, modules = {}, {}, {}, {}, {}, {}
 local snapshot
 local failures, notices = {}, {}
+local window_starts = {}
 local function regression(name, run)
     local ok, err = pcall(run)
     if not ok then table.insert(failures, name .. ": " .. tostring(err)) end
@@ -31,7 +32,10 @@ local tern = {
     json = { decode = function(text) return assert(decoded[text], text) end },
     timer = function(ms, fn) table.insert(timers, { ms = ms, fn = fn }); return { cancel = function() end } end,
     command = function(def) commands[def.id] = def.run end,
-    on = function() end, override = function() end,
+    on = function(name, handler)
+        if name == "window_start" then table.insert(window_starts, handler) end
+    end,
+    override = function() end,
     chrome = { status = function() end }, route = { open = function() end },
 }
 local env = setmetatable({ tern = tern }, { __index = getfenv() })
@@ -156,6 +160,42 @@ local function start(generation, metadata, live)
     for _, timer in startup do if timer.ms == 0 then timer.fn(cx) end end
     poll()
     assert(#events == 0, "initial projection must bind without resync")
+end
+for _, trigger in { "reload", "window_start" } do
+    for _, invalid in { "partial", "unreadable", "nonobject" } do
+        local saved_panes, saved_read, saved_board_read = cx.session.panes, tern.fs.read, cx.board.read
+        regression("reattach " .. trigger .. " after " .. invalid .. " sidecar", function()
+            table.clear(timers); table.clear(events); table.clear(window_starts)
+            files[path .. ".json"] = "initial"
+            snapshot = snap("reattach", "c-a1", "c-b1")
+            local broken_path = modules.gb.board_path("/partial-fixture")
+            local broken = { pane = 3, kind = "board", title = string.match(broken_path, "([^/]+)$") }
+            files[broken_path .. ".json"] = if invalid == "nonobject" then "nonobject" else '{"root":'
+            decoded.nonobject = "not a root record"
+            cx.session.panes = function() return { workspace, broken, boardPane } end
+            tern.fs.read = function(target)
+                if invalid == "unreadable" and target == broken_path .. ".json" then error("read interrupted") end
+                return saved_read(target)
+            end
+            cx.board.read = function(_, pane)
+                assert(pane == boardPane.pane, "an invalid sidecar must not attach a watcher")
+                return saved_board_read()
+            end
+            local window = assert(loadstring(sources.window, "window")); setfenv(window, env); window()
+            local startup = table.clone(timers); table.clear(timers)
+            if trigger == "reload" then
+                for _, timer in startup do if timer.ms == 0 then timer.fn(cx) end end
+            else
+                for _, handler in window_starts do handler(cx) end
+            end
+            poll()
+            assert(#events == 0, "the valid later board must bind without resync")
+            local moved = table.remove(snapshot.lanes[2].cards, 1); table.insert(snapshot.lanes[1].cards, moved)
+            poll()
+            assert(#events == 1 and events[1].act == "native_drop" and events[1].value == "c-a1:U::1", "a bad sidecar must not block a later board's ordinary drag")
+        end)
+        cx.session.panes, tern.fs.read, cx.board.read = saved_panes, saved_read, saved_board_read
+    end
 end
 for renamed = 1, 4 do
     for _, separate_read in { false, true } do
