@@ -46,6 +46,8 @@ You should see `gitbutler` with the version declared in [plugin/plugin.toml](plu
 
 `ready` means Tern loaded both halves of the plugin. Link the `plugin/` folder, not the repository root.
 
+Tern stores the link as an absolute path. If you move or rename the clone, `tern plugin list` reports `link target … is not a directory`; run `tern plugin link plugin` again from the new location.
+
 ### Step 2: Set up a practice folder
 
 Open a new Tern tab, so the shell starts after the plugin has loaded, and make an empty folder:
