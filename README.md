@@ -27,7 +27,7 @@ In this tutorial, we will install the plugin, set up a practice folder, and use 
 
 You need:
 
-- macOS with [Tern](https://docs.stencil.so/tern/index.html) (tested with 0.8.3)
+- macOS with [Tern](https://docs.stencil.so/tern/index.html) (tested with 0.9.4)
 - The GitButler CLI, `but` (tested with 0.22.3). Run `but --version` to check.
 - Tern's status bar turned on. Add `"status_bar": true` to `~/Library/Application Support/Tern/settings.json`, then quit and reopen Tern. The setting doesn't apply to a running Tern.
 

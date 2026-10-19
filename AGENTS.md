@@ -21,6 +21,7 @@ This repo is a GitButler workspace (`gitbutler/workspace`, target `origin/main`,
 - Never add an agent as a commit co-author.
 - **Shipping to `main` (user rule):** every PR goes through the no-mistakes gate, and no-mistakes must follow GitButler (no checkout, no worktree workaround). Only for that ship: `but config push-remote no-mistakes`, `but push <top branch>`, keep the top branch's run and abort the lower ones (`no-mistakes axi abort --run <id>`), then `but config push-remote origin`. One PR per ship.
 - **Auto-merge low-risk PRs (user rule):** when no-mistakes reports a low-risk result and validation/required CI checks pass, merge the PR automatically without another approval request. This is standing merge authorization for that case only; do not infer low risk from the diff size, and do not merge while findings or required checks remain unresolved.
+- **Direct land on request (user rule):** when the user explicitly asks to land a branch directly, skip no-mistakes and run `but land <branch> --yes` onto the target (`origin/main`; "master" means `main` here). Run the repo checks (`.no-mistakes.yaml` `commands`) first; direct lands get no gate review or CI before reaching `main`.
 - **Gate limits on a GitButler workspace:** a push can't carry `--intent`, so the gate infers it from transcripts. `no-mistakes axi respond` has no `--run` and resolves only the current branch, so it cannot answer a gate while HEAD is `gitbutler/workspace`. `no-mistakes axi status --run <id>` and `logs` can inspect that run. `axi respond` only works from a checkout of the run's branch; otherwise hand off with `no-mistakes attach --run <id>`.
 - **Drive gates autonomously (user rule):** use `no-mistakes axi` (`status`, `respond`, `logs`). Answer `auto-fix` gates. Decide `ask-user` findings with judgment and this file's rules. Hand off only when `axi respond` cannot run from this HEAD, or a finding is a product decision these rules do not settle.
 - **Gate runs unattended:** `.no-mistakes.yaml` sets `auto_fix.review: 3`, so review findings marked `auto-fix` are fixed and committed by the gate (the global default `0` parks them). A run still parks for `ask-user` findings, a spent fix budget, a failing test, or a protected-path refusal. Answer those with `axi respond` when this HEAD can; `no-mistakes attach --run <id>` is the handoff when it cannot.
@@ -80,7 +81,7 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
 
 ## User Preferences
 
-- Shipping goes through no-mistakes on top of GitButler, one PR per ship (see GitButler section).
+- Shipping goes through no-mistakes on top of GitButler, one PR per ship (see GitButler section), unless the user explicitly asks to land directly.
 - GitButler's push remote is `origin` except while shipping to `main`.
 - `but tui` opens as picture-in-picture and `q` closes it; keep that.
 - Keep every `GitButler: …` palette command: the plugin serves many users, not one workflow.
