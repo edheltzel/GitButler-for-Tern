@@ -656,6 +656,67 @@ for _, ended in { "exited", "absent" } do
             "pip " .. id(HIGH + 9) .. " --over " .. id(HIGH + 7), "focus " .. id(HIGH + 9) }, "an ended CLI TUI must allow a replacement")
     end)
 end
+for _, creation in { "native", "masked", "refloat", "cli" } do
+    for _, ended in { "absent", "exited" } do
+        for _, replacement in { 11, HIGH + 11 } do
+            regression(creation .. " TUI owner " .. ended .. " replaced by " .. id(replacement), function()
+                local native = creation == "native" or creation == "masked"
+                local owner = if creation == "cli" then HIGH + 7 else 5
+                local tui = if creation == "native" then 10 else HIGH + 9
+                tui_window(if creation == "cli" then 7 else 5, if creation == "cli" then nil else tui % HIGH, false)
+                list(block(owner), block(tui))
+                if native then cli_failures.ls = "daemon unavailable" else cli_failures.pip = "float unavailable" end
+                press()
+                table.clear(calls); table.clear(cli_failures)
+                local panes = { { pane = tui % HIGH, cwd = root }, { pane = replacement % HIGH, cwd = root } }
+                local old = block(owner)
+                if ended == "exited" then
+                    old.exited = 0
+                    table.insert(panes, { pane = owner % HIGH, cwd = root, exited = 0 })
+                    list(block(tui), block(replacement), old)
+                else
+                    list(block(tui), block(replacement))
+                end
+                cx.session.panes = function() return panes end
+                cx.session.focused = function() return tui % HIGH end
+                press()
+                expect(if native then {} else { "ls --json" }, "an ownerless TUI must not be floated over itself or an unrelated pane")
+                table.clear(calls)
+                cx.session.focused = function() return replacement % HIGH end
+                cx.layout.float = function(_, pane, over)
+                    table.insert(native_floats, { pane = pane, over = over })
+                    return creation == "native" and replacement < HIGH and pane == tui and over == replacement
+                end
+                commands.tui(cx); commands.tui(cx); drain()
+                local native_float = creation == "native" and replacement < HIGH
+                if native_float then
+                    expect({}, "a native retry must recover over the live replacement owner")
+                    assert(native_focuses[1] == tui, "native recovery must focus the retained TUI")
+                else
+                    expect({ "ls --json", "pip " .. id(tui) .. " --over " .. id(replacement), "focus " .. id(tui) }, "a CLI retry must resolve the live replacement owner's full id")
+                end
+                if native then
+                    local floated = native_floats[#native_floats]
+                    assert(floated.pane == tui % HIGH and floated.over == replacement % HIGH, "native retry must replace a deleted owner before floating")
+                end
+                assert(native_splits == 1, "replacing a float owner must retain the original TUI")
+                table.clear(calls); press()
+                expect(if native_float then {} else { "ls --json", "focus " .. id(tui) }, "recovered owner replacement must return to focus-only reuse")
+            end)
+        end
+    end
+end
+regression("owner closes during native CLI handoff", function()
+    tui_window(5, 9, false)
+    list(block(5), block(HIGH + 9)); cli_failures.ls = "daemon unavailable"; press()
+    table.clear(calls); table.clear(cli_failures)
+    cx.session.focused = function() return 11 end
+    cx.session.panes = function() return { { pane = 5, cwd = root }, { pane = 9, cwd = root }, { pane = 11, cwd = root } } end
+    commands.tui(cx)
+    list(block(HIGH + 9), block(11)); drain()
+    expect({ "ls --json", "pip " .. id(HIGH + 9) .. " --over 11", "focus " .. id(HIGH + 9) }, "CLI handoff must recheck the owner after the native float attempt")
+    assert(native_splits == 1 and native_floats[2].over == 5, "an async owner change must retain the TUI originally floated over the live owner")
+end)
 -- A healthy Tern floats natively without the CLI.
 tui_window(7, 10, true)
 press()

@@ -411,6 +411,23 @@ local function full_id(blocks: { any }, id: number): number?
 end
 
 local NO_MATCH = "Tern can't target this pane from a plugin (pane ids past 2^44), and `tern ls` for the first window has no unique match"
+local NO_OWNER = "The float owner closed; run this command from another live pane"
+
+local function tui_owner(panes: { any }, pane: number, preferred: number?, focused: number?): number?
+	local current = nil
+	for _, info in panes do
+		local id = info.pane or info.id
+		if id ~= pane and type(info.exited) ~= "number" then
+			if id == preferred then
+				return id
+			end
+			if id == focused then
+				current = id
+			end
+		end
+	end
+	return current
+end
 
 local function tui_via_cli(root: string, over: number)
 	tui_busy[root] = true
@@ -419,7 +436,11 @@ local function tui_via_cli(root: string, over: number)
 		for _, b in blocks do
 			if live and b.id == live.pane and type(b.exited) ~= "number" then
 				if live.over then
-					return float_via_cli(root, b.id, live.over)
+					local target = tui_owner(blocks, b.id, live.over, full_id(blocks, over))
+					if target == nil then
+						return cli_done(root, NO_OWNER)
+					end
+					return float_via_cli(root, b.id, target)
 				end
 				return tern_cli({ "focus", string.format("%.0f", b.id) }, function()
 					cli_done(root, nil)
@@ -443,16 +464,18 @@ local function tui_via_cli(root: string, over: number)
 	end)
 end
 
--- The native split worked (`over` is a real id under 2^44) but the new pane's
--- id is past 2^44, so the native float missed it: float that pane via the CLI.
-local function refloat_via_cli(root: string, pane: number, over: number, err: string?)
+local function refloat_via_cli(root: string, pane: number, over: number, focused: number, err: string?)
 	tui_busy[root] = true
 	list_blocks(root, function(blocks: { any })
 		local full = full_id(blocks, pane)
 		if full == nil then
 			return cli_done(root, (err or "float failed") .. "; " .. NO_MATCH)
 		end
-		float_via_cli(root, full :: number, over)
+		local target = tui_owner(blocks, full :: number, full_id(blocks, over), full_id(blocks, focused))
+		if target == nil then
+			return cli_done(root, NO_OWNER)
+		end
+		float_via_cli(root, full :: number, target)
 	end)
 end
 
@@ -492,9 +515,15 @@ tern.command({
 			tui_panes[root] = live
 		end
 		if live.over then
+			local target = tui_owner(cx.session:panes(), live.pane, live.over, over)
+			if target == nil then
+				cx:toast("error", "Could not float but tui", NO_OWNER)
+				return
+			end
+			live.over = target
 			local ok, err = cx.layout:float(live.pane, live.over)
 			if not ok then
-				refloat_via_cli(root, live.pane, live.over, err)
+				refloat_via_cli(root, live.pane, live.over, over, err)
 				return
 			end
 			live.over = nil
