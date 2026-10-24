@@ -37,13 +37,16 @@ local function root_of(cwd: string?): string?
 	return if known then known else nil
 end
 
+-- From `panes()`, not `pane(id)`: Tern 0.9.5's `pane(id)` misses panes whose
+-- id is 2^44 or more, which `panes()` still lists (see the `tui` command).
 local function focused_cwd(cx: WindowCx): string?
 	local id = cx.session:focused()
-	if id == nil then
-		return nil
+	for _, info in cx.session:panes() do
+		if info.pane == id then
+			return info.cwd
+		end
 	end
-	local info = cx.session:pane(id)
-	return if info then info.cwd else nil
+	return nil
 end
 
 -- Branch names whose unpushed count `but push --dry-run --json` reports.
@@ -311,6 +314,138 @@ tern.command({
 -- running the command again focuses the live one instead of stacking another.
 local tui_panes: { [string]: number } = {}
 
+-- Tern 0.9.5's plugin API keeps only a pane id's low 44 bits (DESIGN.md finding 8), so `split`,
+-- `float` and `pane()` miss every pane a long-lived daemon numbered past 2^44.
+-- The `tern` CLI takes full ids: find the focused pane's full id in `tern ls`
+-- and split and float through it. The plugin can't learn its window key, so
+-- the CLI sees only the first window's sessions: a pane from another window
+-- isn't listed there, and the fallback refuses instead of acting elsewhere.
+local ID_BITS = 2 ^ 44
+local TERN = { "/Applications/Tern.app/Contents/MacOS/tern", (tern.getenv("HOME") or "") .. "/.local/bin/tern" }
+local tui_cli: { [string]: number } = {}
+-- Set while a CLI open or refloat for a root runs, so a second press can't
+-- start another before `tui_cli` knows the first pane. Cleared on every outcome.
+local tui_busy: { [string]: boolean } = {}
+
+local function tern_cli(args: { string }, done: (ok: boolean, out: string) -> ())
+	local bin = "tern"
+	for _, path in TERN do
+		if tern.fs.exists(path) then
+			bin = path
+			break
+		end
+	end
+	local argv = { bin }
+	for _, a in args do
+		table.insert(argv, a)
+	end
+	local env: { [string]: string } = {}
+	for _, k in { "TERN_CONFIG_DIR", "TERN_DAEMON_SOCKET" } do
+		env[k] = tern.getenv(k)
+	end
+	local ok, err = pcall(tern.process.run, argv, { timeout_ms = 5000, env = env }, function(r: ProcessResult, _)
+		done(r.status == 0, if r.status == 0 then r.stdout else r.stderr)
+	end)
+	if not ok then
+		done(false, tostring(err))
+	end
+end
+
+local function cli_done(root: string, failure: string?)
+	tui_busy[root] = nil
+	if failure then
+		tern.timer(0, function(tcx: WindowCx?)
+			if tcx then
+				tcx:toast("error", "Could not open but tui", failure)
+			end
+		end)
+	end
+end
+
+-- Floats the TUI pane `block` over `over` (both full ids) and focuses it.
+local function float_via_cli(root: string, block: number, over: number)
+	tui_cli[root] = block
+	local b = string.format("%.0f", block)
+	tern_cli({ "pip", b, "--over", string.format("%.0f", over) }, function(ok: boolean, out: string)
+		tern_cli({ "focus", b }, function()
+			cli_done(root, if ok then nil else out)
+		end)
+	end)
+end
+
+-- Every block `tern ls --json` lists for the first window, passed to `found`.
+local function list_blocks(root: string, found: ({ any }) -> ())
+	tern_cli({ "ls", "--json" }, function(ok: boolean, out: string)
+		local dok, data = pcall(tern.json.decode, out)
+		if not ok or not dok or type(data) ~= "table" then
+			return cli_done(root, out)
+		end
+		local blocks = {}
+		for _, s in data.sessions or {} do
+			for _, t in s.tabs or {} do
+				for _, b in t.blocks or {} do
+					table.insert(blocks, b)
+				end
+			end
+		end
+		found(blocks)
+	end)
+end
+
+-- The one listed full id whose low 44 bits are `id`, else nil.
+local function full_id(blocks: { any }, id: number): number?
+	local full, matches = nil, 0
+	for _, b in blocks do
+		if b.id % ID_BITS == id then
+			full = b.id
+			matches += 1
+		end
+	end
+	return if matches == 1 then full else nil
+end
+
+local NO_MATCH = "Tern can't target this pane from a plugin (pane ids past 2^44), and `tern ls` for the first window has no unique match"
+
+local function tui_via_cli(root: string, over: number)
+	tui_busy[root] = true
+	list_blocks(root, function(blocks: { any })
+		for _, b in blocks do
+			if b.id == tui_cli[root] and type(b.exited) ~= "number" then
+				return tern_cli({ "focus", string.format("%.0f", b.id) }, function()
+					cli_done(root, nil)
+				end)
+			end
+		end
+		tui_cli[root] = nil
+		local full = full_id(blocks, over)
+		if full == nil then
+			return cli_done(root, NO_MATCH)
+		end
+		local target = full :: number
+		local args = { "split", string.format("%.0f", target), "right", "--json", "--cwd", root, "--", "but", "tui" }
+		tern_cli(args, function(ok: boolean, out: string)
+			local jok, made = pcall(tern.json.decode, out)
+			if not ok or not jok or type(made) ~= "table" or type(made.block) ~= "number" then
+				return cli_done(root, out)
+			end
+			float_via_cli(root, made.block, target)
+		end)
+	end)
+end
+
+-- The native split worked (`over` is a real id under 2^44) but the new pane's
+-- id is past 2^44, so the native float missed it: float that pane via the CLI.
+local function refloat_via_cli(root: string, pane: number, over: number, err: string?)
+	tui_busy[root] = true
+	list_blocks(root, function(blocks: { any })
+		local full = full_id(blocks, pane)
+		if full == nil then
+			return cli_done(root, (err or "float failed") .. "; " .. NO_MATCH)
+		end
+		float_via_cli(root, full :: number, over)
+	end)
+end
+
 tern.command({
 	id = "tui",
 	title = "GitButler: Open TUI",
@@ -319,7 +454,7 @@ tern.command({
 	run = function(cx: WindowCx)
 		local root = focused_root(cx)
 		local over = cx.session:focused()
-		if root == nil or over == nil then
+		if root == nil or over == nil or tui_busy[root] then
 			return
 		end
 		local live = tui_panes[root]
@@ -331,16 +466,18 @@ tern.command({
 			end
 			tui_panes[root] = nil
 		end
-		local pane = cx.layout:split(over, "right", { cwd = root, command = "but tui" })
+		-- A CLI-opened TUI is only visible to the CLI: let it focus or replace that one.
+		local pane = if tui_cli[root] then nil else cx.layout:split(over, "right", { cwd = root, command = "but tui" })
 		if pane == nil then
-			cx:toast("error", "Could not open but tui")
+			tui_via_cli(root, over)
+			return
+		end
+		local ok, err = cx.layout:float(pane, over)
+		if not ok then
+			refloat_via_cli(root, pane, over, err)
 			return
 		end
 		tui_panes[root] = pane
-		local ok, err = cx.layout:float(pane, over)
-		if not ok then
-			cx:toast("error", "Could not float but tui", err)
-		end
 		-- Floating hands focus back to the pane underneath; typing belongs to the tui.
 		cx.layout:focus(pane)
 	end,
@@ -716,7 +853,8 @@ tern.on("pane_closed", function(ev: PaneEvent, cx: WindowCx)
 	warned[ev.pane] = nil
 	for _, pane in cx.session:panes() do
 		if pane.block == WORKSPACE and pane.pane ~= ev.pane then
-			cx.session:event(pane.pane, { ev = "action", act = "native_closed", value = ev.pane })
+			-- An ended workspace block is still listed but rejects events.
+			pcall(cx.session.event, cx.session, pane.pane, { ev = "action", act = "native_closed", value = ev.pane })
 		end
 	end
 end)

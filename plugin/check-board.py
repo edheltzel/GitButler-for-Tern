@@ -493,7 +493,81 @@ for elapsed = 200, 6000, 200 do
     end
 end
 assert(opened == 1 and #notices == 0, "board opener timed out before a supported six-second status read completed")
-print("board watcher: stale snapshots rejected; lane edits and reloads resynced; read limits reported; assigned files projected")
+-- Tern 0.9.5's plugin API keeps only a pane id's low 44 bits (DESIGN.md
+-- finding 8). `tui` must then split and float through the `tern` CLI with
+-- full ids, and reuse the pane it made instead of opening a second TUI.
+local HIGH = 2 ^ 44
+local function id(n) return string.format("%.0f", n) end
+local calls, native_splits, listing = {}, 0, { sessions = { { tabs = { { blocks = {} } } } } }
+local function list(...) listing.sessions[1].tabs[1].blocks = { ... } end
+local function block(n) return { id = n } end
+decoded.ls, decoded.split = listing, { block = HIGH + 9 }
+-- Callbacks queue like real processes, so two presses can overlap before any finishes.
+local queued = {}
+tern.process = { run = function(argv, _, cb)
+    table.insert(calls, table.concat(argv, " ", 2))
+    table.insert(queued, function()
+        cb({ status = 0, stdout = if argv[2] == "ls" or argv[2] == "split" then argv[2] else "", stderr = "" }, nil)
+    end)
+end }
+local function drain()
+    while #queued > 0 do table.remove(queued, 1)() end
+end
+local function press() commands.tui(cx); drain() end
+local function tui_window(focused, split, float_ok)
+    table.clear(timers); table.clear(calls); table.clear(notices); table.clear(queued); native_splits = 0
+    chunk = assert(loadstring(sources.window, "window")); setfenv(chunk, env); chunk()
+    table.clear(timers)
+    cx.session.focused = function() return focused end
+    cx.session.panes = function() return { { pane = focused, cwd = root } } end
+    cx.layout.split = function() native_splits += 1; return split end
+    cx.layout.float = function() return float_ok, if float_ok then nil else "picture in picture needs another tiled block on the same host" end
+end
+local function expect(want, why)
+    assert(table.concat(calls, "\n") == table.concat(want, "\n"), why .. ":\n" .. table.concat(calls, "\n"))
+end
+-- A pane numbered past 2^44: the native split misses it, the CLI uses its full id.
+tui_window(7, nil, true)
+list(block(HIGH + 7))
+press()
+expect({ "ls --json", "split " .. id(HIGH + 7) .. " right --json --cwd " .. root .. " -- but tui",
+    "pip " .. id(HIGH + 9) .. " --over " .. id(HIGH + 7), "focus " .. id(HIGH + 9) }, "a high-id pane must split and float through the CLI")
+table.clear(calls); list(block(HIGH + 7), block(HIGH + 9))
+press()
+expect({ "ls --json", "focus " .. id(HIGH + 9) }, "running tui again must focus the CLI-opened TUI")
+assert(native_splits == 1, "a CLI-opened TUI must not be duplicated by a native split")
+-- An old pane under 2^44 splits natively, but its new pane is past 2^44:
+-- float that same pane through the CLI, never a second split.
+tui_window(5, 9, false)
+list(block(5), block(HIGH + 9))
+press()
+expect({ "ls --json", "pip " .. id(HIGH + 9) .. " --over 5", "focus " .. id(HIGH + 9) }, "a failed native float must float the pane it split")
+-- Two listed panes share the low bits (or the pane is in another window): refuse.
+tui_window(7, nil, true)
+list(block(HIGH + 7), block(2 * HIGH + 7))
+press()
+expect({ "ls --json" }, "an ambiguous id must not split or float anything")
+for _, timer in timers do timer.fn(cx) end
+assert(notices[1] == "Could not open but tui", "an ambiguous id must report why the TUI did not open")
+table.clear(calls); table.clear(timers); list(block(HIGH + 7))
+press()
+assert(#calls == 4, "a refusal must release the latch so the next press opens the TUI:\n" .. table.concat(calls, "\n"))
+-- Two quick presses before any CLI call returns open one TUI, not two.
+tui_window(7, nil, true)
+list(block(HIGH + 7))
+commands.tui(cx); commands.tui(cx); drain()
+local splits = 0
+for _, call in calls do if string.sub(call, 1, 5) == "split" then splits += 1 end end
+assert(splits == 1 and native_splits == 1, "a second press during a CLI open must not split again")
+tui_window(5, 9, false)
+list(block(5), block(HIGH + 9))
+commands.tui(cx); commands.tui(cx); drain()
+assert(native_splits == 1, "a second press during a CLI refloat must not split natively again")
+-- A healthy Tern floats natively without the CLI.
+tui_window(7, 10, true)
+press()
+expect({}, "a native split and float must not run the CLI")
+print("board watcher: stale snapshots rejected; lane edits and reloads resynced; read limits reported; assigned files projected; tui ids past 2^44 opened through the CLI")
 '''
 with tempfile.TemporaryDirectory(prefix=".board-check-", dir=plugin.parent) as tmp:
     runner = Path(tmp) / "check.luau"
