@@ -312,7 +312,8 @@ tern.command({
 -- `but tui` in a new shell pane floated as picture-in-picture over the
 -- focused pane; the shell's own PATH finds `but`. One per workspace root:
 -- running the command again focuses the live one instead of stacking another.
-local tui_panes: { [string]: number } = {}
+type TuiPane = { pane: number, over: number? }
+local tui_panes: { [string]: TuiPane } = {}
 
 -- Tern 0.9.5's plugin API keeps only a pane id's low 44 bits (DESIGN.md finding 8), so `split`,
 -- `float` and `pane()` miss every pane a long-lived daemon numbered past 2^44.
@@ -322,7 +323,7 @@ local tui_panes: { [string]: number } = {}
 -- isn't listed there, and the fallback refuses instead of acting elsewhere.
 local ID_BITS = 2 ^ 44
 local TERN = { "/Applications/Tern.app/Contents/MacOS/tern", (tern.getenv("HOME") or "") .. "/.local/bin/tern" }
-local tui_cli: { [string]: number } = {}
+local tui_cli: { [string]: TuiPane } = {}
 -- Set while a CLI open or refloat for a root runs, so a second press can't
 -- start another before `tui_cli` knows the first pane. Cleared on every outcome.
 local tui_busy: { [string]: boolean } = {}
@@ -364,9 +365,14 @@ end
 
 -- Floats the TUI pane `block` over `over` (both full ids) and focuses it.
 local function float_via_cli(root: string, block: number, over: number)
-	tui_cli[root] = block
+	local live: TuiPane = { pane = block, over = over }
+	tui_cli[root] = live
+	tui_panes[root] = nil
 	local b = string.format("%.0f", block)
 	tern_cli({ "pip", b, "--over", string.format("%.0f", over) }, function(ok: boolean, out: string)
+		if ok then
+			live.over = nil
+		end
 		tern_cli({ "focus", b }, function()
 			cli_done(root, if ok then nil else out)
 		end)
@@ -409,8 +415,12 @@ local NO_MATCH = "Tern can't target this pane from a plugin (pane ids past 2^44)
 local function tui_via_cli(root: string, over: number)
 	tui_busy[root] = true
 	list_blocks(root, function(blocks: { any })
+		local live = tui_cli[root]
 		for _, b in blocks do
-			if b.id == tui_cli[root] and type(b.exited) ~= "number" then
+			if live and b.id == live.pane and type(b.exited) ~= "number" then
+				if live.over then
+					return float_via_cli(root, b.id, live.over)
+				end
 				return tern_cli({ "focus", string.format("%.0f", b.id) }, function()
 					cli_done(root, nil)
 				end)
@@ -459,27 +469,38 @@ tern.command({
 		end
 		local live = tui_panes[root]
 		if live then
-			local info = cx.session:pane(live)
-			if info and info.exited == nil then
-				cx.layout:focus(live)
+			local alive = false
+			for _, info in cx.session:panes() do
+				if info.pane == live.pane and info.exited == nil then
+					alive = true
+					break
+				end
+			end
+			if not alive then
+				tui_panes[root] = nil
+				live = nil
+			end
+		end
+		if live == nil then
+			-- A CLI-opened TUI is only visible to the CLI: let it focus or replace that one.
+			local pane = if tui_cli[root] then nil else cx.layout:split(over, "right", { cwd = root, command = "but tui" })
+			if pane == nil then
+				tui_via_cli(root, over)
 				return
 			end
-			tui_panes[root] = nil
+			live = { pane = pane, over = over }
+			tui_panes[root] = live
 		end
-		-- A CLI-opened TUI is only visible to the CLI: let it focus or replace that one.
-		local pane = if tui_cli[root] then nil else cx.layout:split(over, "right", { cwd = root, command = "but tui" })
-		if pane == nil then
-			tui_via_cli(root, over)
-			return
+		if live.over then
+			local ok, err = cx.layout:float(live.pane, live.over)
+			if not ok then
+				refloat_via_cli(root, live.pane, live.over, err)
+				return
+			end
+			live.over = nil
 		end
-		local ok, err = cx.layout:float(pane, over)
-		if not ok then
-			refloat_via_cli(root, pane, over, err)
-			return
-		end
-		tui_panes[root] = pane
 		-- Floating hands focus back to the pane underneath; typing belongs to the tui.
-		cx.layout:focus(pane)
+		cx.layout:focus(live.pane)
 	end,
 })
 
