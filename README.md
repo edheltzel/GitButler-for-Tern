@@ -27,7 +27,7 @@ In this tutorial, we will install the plugin, set up a practice folder, and use 
 
 You need:
 
-- macOS with [Tern](https://docs.stencil.so/tern/index.html) (tested with 0.9.4)
+- macOS with [Tern](https://docs.stencil.so/tern/index.html) (tested with 0.9.4; see [finding 8 for pane-id compatibility limits in Tern 0.9.5](DESIGN.md#open-questions--findings))
 - The GitButler CLI, `but` (tested with 0.22.3). Run `but --version` to check.
 - Tern's status bar turned on. Add `"status_bar": true` to `~/Library/Application Support/Tern/settings.json`, then quit and reopen Tern. The setting doesn't apply to a running Tern.
 
@@ -153,7 +153,7 @@ In this tutorial, you:
 
   ![The Pull origin/main sheet: 1 new commit on origin/main, what pulling does, and the but pull command](docs/images/pull.png)
 - **L** lands a branch with `but land --yes`, which updates the target branch directly without a pull request. Skip it in repositories where work must land through a PR.
-- Press **⌥⇧⌘T**, or run **GitButler: Open TUI** from the palette, to open GitButler's terminal UI in a floating pane over your shell; **q** closes it. Running it again focuses that workspace's live TUI instead of opening another. Run **GitButler: Open GUI** to open the desktop app on the same workspace.
+- Press **⌥⇧⌘T**, or run **GitButler: Open TUI** from the palette, to open GitButler's terminal UI in a floating pane over your shell; **q** closes it. Running it again reuses that workspace's live TUI; see [finding 8 for retries after a failed float](DESIGN.md#open-questions--findings). Run **GitButler: Open GUI** to open the desktop app on the same workspace.
 
   ![but tui in a floating pane over the shell, beside the workspace block](docs/images/but-tui.png)
 - Run **GitButler: Set up this folder** in an existing git repository to start using GitButler there. It refuses your home folder and `/`.

@@ -493,7 +493,238 @@ for elapsed = 200, 6000, 200 do
     end
 end
 assert(opened == 1 and #notices == 0, "board opener timed out before a supported six-second status read completed")
-print("board watcher: stale snapshots rejected; lane edits and reloads resynced; read limits reported; assigned files projected")
+-- Tern 0.9.5's plugin API keeps only a pane id's low 44 bits (DESIGN.md
+-- finding 8). `tui` must then split and float through the `tern` CLI with
+-- full ids, and reuse the pane it made instead of opening a second TUI.
+local HIGH = 2 ^ 44
+local function id(n) return string.format("%.0f", n) end
+local calls, native_splits, listing = {}, 0, { sessions = { { tabs = { { blocks = {} } } } } }
+local cli_failures, native_floats, native_focuses = {}, {}, {}
+local native_pane
+local function list(...) listing.sessions[1].tabs[1].blocks = { ... } end
+local function block(n) return { id = n } end
+decoded.ls, decoded.split = listing, { block = HIGH + 9 }
+-- Callbacks queue like real processes, so two presses can overlap before any finishes.
+local queued = {}
+tern.process = { run = function(argv, _, cb)
+    table.insert(calls, table.concat(argv, " ", 2))
+    local failure = cli_failures[argv[2]]
+    table.insert(queued, function()
+        cb({ status = if failure then 1 else 0, stdout = if argv[2] == "ls" or argv[2] == "split" then argv[2] else "", stderr = failure or "" }, nil)
+    end)
+end }
+local function drain()
+    while #queued > 0 do table.remove(queued, 1)() end
+end
+local function press() commands.tui(cx); drain() end
+local function tui_window(focused, split, float_ok)
+    table.clear(timers); table.clear(calls); table.clear(notices); table.clear(queued); native_splits = 0
+    table.clear(cli_failures); table.clear(native_floats); table.clear(native_focuses); native_pane = nil
+    chunk = assert(loadstring(sources.window, "window")); setfenv(chunk, env); chunk()
+    table.clear(timers)
+    cx.session.focused = function() return focused end
+    cx.session.panes = function()
+        local panes = { { pane = focused, cwd = root } }
+        if native_pane then table.insert(panes, native_pane) end
+        return panes
+    end
+    cx.session.pane = function(_, pane)
+        return if native_pane and pane == native_pane.pane and float_ok then native_pane else nil
+    end
+    cx.layout.split = function()
+        native_splits += 1
+        native_pane = if split then { pane = split, cwd = root } else nil
+        return split
+    end
+    cx.layout.float = function(_, pane, over)
+        table.insert(native_floats, { pane = pane, over = over })
+        return float_ok, if float_ok then nil else "picture in picture needs another tiled block on the same host"
+    end
+    cx.layout.focus = function(_, pane) table.insert(native_focuses, pane) end
+end
+local function expect(want, why)
+    assert(table.concat(calls, "\n") == table.concat(want, "\n"), why .. ":\n" .. table.concat(calls, "\n"))
+end
+-- A pane numbered past 2^44: the native split misses it, the CLI uses its full id.
+tui_window(7, nil, true)
+list(block(HIGH + 7))
+press()
+expect({ "ls --json", "split " .. id(HIGH + 7) .. " right --json --cwd " .. root .. " -- but tui",
+    "pip " .. id(HIGH + 9) .. " --over " .. id(HIGH + 7), "focus " .. id(HIGH + 9) }, "a high-id pane must split and float through the CLI")
+table.clear(calls); list(block(HIGH + 7), block(HIGH + 9))
+press()
+expect({ "ls --json", "focus " .. id(HIGH + 9) }, "running tui again must focus the CLI-opened TUI")
+assert(native_splits == 1, "a CLI-opened TUI must not be duplicated by a native split")
+-- An old pane under 2^44 splits natively, but its new pane is past 2^44:
+-- float that same pane through the CLI, never a second split.
+tui_window(5, 9, false)
+list(block(5), block(HIGH + 9))
+press()
+expect({ "ls --json", "pip " .. id(HIGH + 9) .. " --over 5", "focus " .. id(HIGH + 9) }, "a failed native float must float the pane it split")
+-- Two listed panes share the low bits (or the pane is in another window): refuse.
+tui_window(7, nil, true)
+list(block(HIGH + 7), block(2 * HIGH + 7))
+press()
+expect({ "ls --json" }, "an ambiguous id must not split or float anything")
+for _, timer in timers do timer.fn(cx) end
+assert(notices[1] == "Could not open but tui", "an ambiguous id must report why the TUI did not open")
+table.clear(calls); table.clear(timers); list(block(HIGH + 7))
+press()
+assert(#calls == 4, "a refusal must release the latch so the next press opens the TUI:\n" .. table.concat(calls, "\n"))
+-- Two quick presses before any CLI call returns open one TUI, not two.
+tui_window(7, nil, true)
+list(block(HIGH + 7))
+commands.tui(cx); commands.tui(cx); drain()
+local splits = 0
+for _, call in calls do if string.sub(call, 1, 5) == "split" then splits += 1 end end
+assert(splits == 1 and native_splits == 1, "a second press during a CLI open must not split again")
+tui_window(5, 9, false)
+list(block(5), block(HIGH + 9))
+commands.tui(cx); commands.tui(cx); drain()
+assert(native_splits == 1, "a second press during a CLI refloat must not split natively again")
+for _, failure in { "ls", "missing", "ambiguous" } do
+    regression("native TUI retained after " .. failure .. " lookup", function()
+        tui_window(5, 9, false)
+        if failure == "ls" then cli_failures.ls = "daemon unavailable" end
+        if failure == "ambiguous" then list(block(5), block(HIGH + 9), block(2 * HIGH + 9)) else list(block(5)) end
+        press()
+        table.clear(calls)
+        cx.session.focused = function() return 9 end
+        press()
+        expect({ "ls --json" }, "a failed lookup must retry the existing native TUI without splitting")
+        assert(native_splits == 1 and #native_floats == 2, "lookup failure must retain the native split")
+        assert(native_floats[2].pane == 9 and native_floats[2].over == 5, "native retry must retain the original pane and owner after focus changes")
+        table.clear(calls); cli_failures.ls = nil; list(block(5), block(HIGH + 9))
+        commands.tui(cx); commands.tui(cx); drain()
+        expect({ "ls --json", "pip " .. id(HIGH + 9) .. " --over 5", "focus " .. id(HIGH + 9) }, "lookup recovery must float the retained TUI")
+        assert(native_splits == 1, "lookup recovery must not open another TUI")
+        table.clear(calls); press()
+        expect({ "ls --json", "focus " .. id(HIGH + 9) }, "a recovered TUI must be focused without floating again")
+    end)
+end
+for _, creation in { "native", "cli" } do
+    regression(creation .. " TUI retained after pip failure", function()
+        local owner = if creation == "native" then 5 else HIGH + 7
+        tui_window(if creation == "native" then 5 else 7, if creation == "native" then 9 else nil, false)
+        list(block(owner), block(HIGH + 9))
+        cli_failures.pip = "float unavailable"
+        press()
+        table.clear(calls)
+        cx.session.focused = function() return 9 end
+        cx.session.panes = function() return { { pane = 9, cwd = root } } end
+        cli_failures.ls = "daemon unavailable"
+        press()
+        expect({ "ls --json" }, "a failed listing must retain the CLI TUI for another retry")
+        table.clear(calls); cli_failures.ls = nil
+        press()
+        expect({ "ls --json", "pip " .. id(HIGH + 9) .. " --over " .. id(owner), "focus " .. id(HIGH + 9) }, "failed pip must be retried on the same TUI over its original owner")
+        table.clear(calls); cli_failures.pip = nil
+        commands.tui(cx); commands.tui(cx); drain()
+        expect({ "ls --json", "pip " .. id(HIGH + 9) .. " --over " .. id(owner), "focus " .. id(HIGH + 9) }, "pip recovery must float and focus the existing TUI")
+        assert(native_splits == 1, "pip retry must never split another native pane")
+        table.clear(calls); press()
+        expect({ "ls --json", "focus " .. id(HIGH + 9) }, "successful pip retry must return to ordinary focus-only reuse")
+    end)
+end
+regression("native float retry without the CLI", function()
+    tui_window(5, 9, false)
+    list(block(5)); press()
+    table.clear(calls)
+    cx.layout.float = function(_, pane, over)
+        assert(pane == 9 and over == 5, "native float recovery must reuse the original pane and owner")
+        return true
+    end
+    press()
+    expect({}, "a recovered native float must not need the CLI")
+    assert(native_splits == 1 and native_focuses[1] == 9, "native float recovery must focus its existing TUI")
+end)
+for _, ended in { "exited", "absent" } do
+    regression("replace " .. ended .. " native TUI", function()
+        tui_window(5, 9, false)
+        list(block(5)); press()
+        if ended == "exited" then native_pane.exited = 0 else native_pane = nil end
+        list(block(5), block(HIGH + 9)); press()
+        assert(native_splits == 2, "an ended native TUI must not block opening its replacement")
+    end)
+    regression("replace " .. ended .. " CLI TUI", function()
+        tui_window(7, nil, true)
+        list(block(HIGH + 7)); cli_failures.pip = "float unavailable"; press()
+        local old = block(HIGH + 9)
+        if ended == "exited" then old.exited = 0; list(block(HIGH + 7), old) else list(block(HIGH + 7)) end
+        table.clear(calls); cli_failures.pip = nil; press()
+        expect({ "ls --json", "split " .. id(HIGH + 7) .. " right --json --cwd " .. root .. " -- but tui",
+            "pip " .. id(HIGH + 9) .. " --over " .. id(HIGH + 7), "focus " .. id(HIGH + 9) }, "an ended CLI TUI must allow a replacement")
+    end)
+end
+for _, creation in { "native", "masked", "refloat", "cli" } do
+    for _, ended in { "absent", "exited" } do
+        for _, replacement in { 11, HIGH + 11 } do
+            regression(creation .. " TUI owner " .. ended .. " replaced by " .. id(replacement), function()
+                local native = creation == "native" or creation == "masked"
+                local owner = if creation == "cli" then HIGH + 7 else 5
+                local tui = if creation == "native" then 10 else HIGH + 9
+                tui_window(if creation == "cli" then 7 else 5, if creation == "cli" then nil else tui % HIGH, false)
+                list(block(owner), block(tui))
+                if native then cli_failures.ls = "daemon unavailable" else cli_failures.pip = "float unavailable" end
+                press()
+                table.clear(calls); table.clear(cli_failures)
+                local panes = { { pane = tui % HIGH, cwd = root }, { pane = replacement % HIGH, cwd = root } }
+                local old = block(owner)
+                if ended == "exited" then
+                    old.exited = 0
+                    table.insert(panes, { pane = owner % HIGH, cwd = root, exited = 0 })
+                    list(block(tui), block(replacement), old)
+                else
+                    list(block(tui), block(replacement))
+                end
+                cx.session.panes = function() return panes end
+                cx.session.focused = function() return tui % HIGH end
+                press()
+                expect(if native then {} else { "ls --json" }, "an ownerless TUI must not be floated over itself or an unrelated pane")
+                table.clear(calls)
+                cx.session.focused = function() return replacement % HIGH end
+                cx.layout.float = function(_, pane, over)
+                    table.insert(native_floats, { pane = pane, over = over })
+                    return creation == "native" and replacement < HIGH and pane == tui and over == replacement
+                end
+                commands.tui(cx); commands.tui(cx); drain()
+                local native_float = creation == "native" and replacement < HIGH
+                if native_float then
+                    expect({}, "a native retry must recover over the live replacement owner")
+                    assert(native_focuses[1] == tui, "native recovery must focus the retained TUI")
+                else
+                    expect({ "ls --json", "pip " .. id(tui) .. " --over " .. id(replacement), "focus " .. id(tui) }, "a CLI retry must resolve the live replacement owner's full id")
+                end
+                if native then
+                    local floated = native_floats[#native_floats]
+                    assert(floated.pane == tui % HIGH and floated.over == replacement % HIGH, "native retry must replace a deleted owner before floating")
+                end
+                assert(native_splits == 1, "replacing a float owner must retain the original TUI")
+                table.clear(calls); press()
+                expect(if native_float then {} else { "ls --json", "focus " .. id(tui) }, "recovered owner replacement must return to focus-only reuse")
+            end)
+        end
+    end
+end
+regression("owner closes during native CLI handoff", function()
+    tui_window(5, 9, false)
+    list(block(5), block(HIGH + 9)); cli_failures.ls = "daemon unavailable"; press()
+    table.clear(calls); table.clear(cli_failures)
+    cx.session.focused = function() return 11 end
+    cx.session.panes = function() return { { pane = 5, cwd = root }, { pane = 9, cwd = root }, { pane = 11, cwd = root } } end
+    commands.tui(cx)
+    list(block(HIGH + 9), block(11)); drain()
+    expect({ "ls --json", "pip " .. id(HIGH + 9) .. " --over 11", "focus " .. id(HIGH + 9) }, "CLI handoff must recheck the owner after the native float attempt")
+    assert(native_splits == 1 and native_floats[2].over == 5, "an async owner change must retain the TUI originally floated over the live owner")
+end)
+-- A healthy Tern floats natively without the CLI.
+tui_window(7, 10, true)
+press()
+expect({}, "a native split and float must not run the CLI")
+press()
+assert(native_splits == 1 and #native_floats == 1 and #native_focuses == 2, "healthy native reuse must only focus its live TUI")
+if #failures > 0 then error(table.concat(failures, "\n")) end
+print("board watcher: stale snapshots rejected; lane edits and reloads resynced; read limits reported; assigned files projected; tui ids past 2^44 opened through the CLI")
 '''
 with tempfile.TemporaryDirectory(prefix=".board-check-", dir=plugin.parent) as tmp:
     runner = Path(tmp) / "check.luau"
