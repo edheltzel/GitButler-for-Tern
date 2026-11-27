@@ -32,7 +32,7 @@ This repo is a GitButler workspace (`gitbutler/workspace`, target `origin/main`,
 - Link into Tern (reloads on every save): `tern plugin link plugin` (link `plugin/`, never the repo root)
 - Status and load errors: `tern plugin list` (host half); window-half errors appear in `~/Library/Logs/Tern/tern.log`
 - Force reload: `tern plugin reload`
-- Regenerate types after a Tern upgrade: `tern plugin types plugin` (writes `plugin/tern.d.luau`; don't hand-edit it)
+- After a Tern upgrade: regenerate types with `tern plugin types plugin` (writes `plugin/tern.d.luau`; don't hand-edit it), then re-check the pane id masking in `DESIGN.md` finding 8 in the real Tern (the isolated Tern's ids are too small to show it)
 - Parser and width check: `cd plugin && luau check.luau` (must print `parse: ok`)
 - Syntax check: run the `commands.lint` script in [.no-mistakes.yaml](.no-mistakes.yaml) from the repo root; it allows expected type noise but rejects syntax errors and analyzer failures.
 - CI: `.no-mistakes.yaml` owns the check commands; `.github/workflows/ci.yml` mirrors them on Luau 0.741 (regenerate with `no-mistakes ci-workflow -f`, then restore the Install Luau step, the lint script and the concurrency block). A newer push cancels a PR's run; each `main` run has its own concurrency group (`github.run_id`), so none is cancelled or replaced while pending. The gate reads `commands.*` only from `main`, and GitHub Actions runs `run:` steps with `bash -e`, so test a changed script under both `sh -c` and `bash -e -c`.
@@ -47,6 +47,7 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
   (Plain git is allowed here only to seed the scratch repo before `but setup`.)
 - Isolated Tern: `printf '{"shell":"/opt/homebrew/bin/fish","status_bar":true}\n' > /tmp/ttc/settings.json`, `TERN_CONFIG_DIR=/tmp/ttc tern plugin link plugin`, then from `/tmp/ttc` run `TERN_CONFIG_DIR=/tmp/ttc TERN_DAEMON_SOCKET=/tmp/ttc/daemon.sock tern --control /tmp/ttc/ctl.sock /tmp/gbs/work` (long-running).
 - **Never override `HOME`** (no fake home dirs). Tern's sign-in lives under the real home, so a fresh home opens Tern's closed-beta sign-in screen and loads no plugins. Isolate with `TERN_CONFIG_DIR`, `TERN_DAEMON_SOCKET` and `--control` only, as above. This applies to no-mistakes test agents too.
+- **Real-Tern exception, pane ids past 2^44 only** (`DESIGN.md` finding 8): the isolated daemon's ids stay under 2^44, so that bug can't be reproduced there. When a change or a Tern upgrade needs a high-id check, you may use the user's real Tern for exactly this: open one throwaway shell pane in the scratch repo (`tern split <pane> right --cwd /tmp/gbs/work`; new panes in the long-lived daemon get ids past 2^44), run a temporary read-only palette command that reports `cx.session:focused()`, `pane()`, `tab_of()` and `tern ls` ids, and open and close the plugin's own `but tui` pane from that throwaway pane. Then close the pane and delete the temporary command. Never type into, focus away from, or close the user's own panes, and never mutate a real repo. Everything else stays in the isolated Tern.
 - Drive it with `TERN_CONFIG_DIR=/tmp/ttc TERN_DAEMON_SOCKET=/tmp/ttc/daemon.sock`:
   - `tern ls`
   - `tern send <pane> keys enter` / `tern send <pane> text c`
@@ -67,6 +68,7 @@ Run tests in the scratch repo and an isolated Tern, never in real repos.
 - Tern watches the linked package recursively, and `.git` writes count as changes (measured: each one reloads every plugin). That is why the package lives in `plugin/` with `.git` at the repo root. Never move plugin files to the root or link the root, or every `but` call in this repo will reload Tern's plugins.
 - `tern ctl wait` and `tern ctl type` can hang: wrap `ctl` calls in `timeout`, and use `tern send` for keys.
 - A plugin reload does not emit `window_start`/`focus`. Window state is re-bootstrapped with `tern.timer(0, …)`.
+- Tern 0.9.5's plugin API drops pane id bits from 2^44 up, and a long-lived daemon's new panes are past 2^44, so `cx.session:pane`, `split`, `float` and `event` miss them in the real Tern while the isolated Tern works. A bug that shows only in the real Tern: compare `tern ls` ids with `cx.session:focused()` first. See `DESIGN.md` finding 8.
 - `but` 0.22.3 cannot assign an uncommitted file to a branch without committing it (`rub` is retired). See `DESIGN.md`.
 - `but` 0.22.3 `move` can lose work: when it fails with "Uncommitted files would be overwritten by checkout" it still drops the commit and the dependent uncommitted change, with no oplog entry. Recover with `but resolve <path>` then `but oplog restore <sha>`. See `DESIGN.md` finding 6.
 - One slow plugin load (over 50 ms, e.g. two Terns reloading on the same save) makes Tern disable the plugin's window half until the next reload: palette commands, global keys and the status segment stop working. `tern plugin reload` brings them back.
